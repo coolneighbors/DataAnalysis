@@ -9,68 +9,80 @@ import csv
 import json 
 import copy
 
-def stringToJson(string):
-    res = json.loads(string)
-    return res
-
-def csvToDict(filename):
-    with open(filename, mode='r') as csv_file:
-        csv_reader = csv.DictReader(csv_file)
-        return csv_reader
-
-def parseTargets(subject_file_string, class_file_string):
+class Parser:
+    def __init__(self, subject_file_string_in,class_file_string_in):
+        
+        self.class_file_string = class_file_string_in
+        self.subject_file_string = subject_file_string_in
+        
+        self.targets_classificationsToList()
+        
+        
+        
+    def stringToJson(self,string):
+        res = json.loads(string)
+        return res
     
-    sub_file = open(subject_file_string, mode='r')
-
-    class_file = open(class_file_string, mode='r')
-    
-    subjects = csv.DictReader(sub_file)
-    classifications = csv.DictReader(class_file)
-    classifications_list = copy.copy(list(classifications))
-    
-    for sub in subjects:
-        subBool = None
-        subID=sub["subject_id"]
-        
-        metadata_json = stringToJson(sub["metadata"])
-        
-        subClass = metadata_json["#R/F"]
-        
-        if subClass == "R":
-            subBool = True
-        else:
-            subBool = False
+    def printAccuracy(self):
+        for sub_obj in self.subjects_list:
+            sub = dict(sub_obj)
+            subBool = None
+            subID=sub["subject_id"]
+            metadata_json = self.stringToJson(sub["metadata"])
+            subClass = metadata_json["#R/F"]
             
-            
-        correctClass=0
-        incorrectClass=0
-        
-        
-        for cl in classifications_list:           
-            classID = cl["subject_ids"]
-            
-            if classID == subID:
+            if subClass == "R":
+                subBool = True
+            else:
+                subBool = False
                 
-                anno = stringToJson(cl["annotations"])
                 
-                if anno[0]["value"] == "Yes":
-                    clBool = True
-                else:
-                    clBool = False
+            correctClass=0
+            incorrectClass=0
+            
+            
+            for cl in self.classifications_list:           
+                classID = cl["subject_ids"]
+                
+                if classID == subID:
                     
-                if subBool == clBool:
-                    correctClass += 1
-                else:
-                    incorrectClass += 1
-                
-        print(f"Subject {subID} was classified correctly {correctClass} times and incorrect {incorrectClass} times")
-    
-    
-    class_file.close()
-    sub_file.close()
-                
-parseTargets("byw-cn-test-project-subjects.csv","byw-cn-test-project-classifications.csv")
+                    anno = self.stringToJson(cl["annotations"])
+                    
+                    if anno[0]["value"] == "Yes":
+                        clBool = True
+                    else:
+                        clBool = False
+                        
+                    if subBool == clBool:
+                        correctClass += 1
+                    else:
+                        incorrectClass += 1
+                    
+            print(f"Subject {subID} was classified correctly {correctClass} times and incorrect {incorrectClass} times")
         
+
+    def targets_classificationsToList(self):
+    
+        sub_file = open(self.subject_file_string, mode='r')
+    
+        class_file = open(self.class_file_string, mode='r')
+        
+        self.subjects_list = copy.deepcopy(list(csv.DictReader(sub_file)))
+        self.classifications_list = copy.deepcopy(list(csv.DictReader(class_file)))
+        
+        class_file.close()
+        sub_file.close()
+        
+        
+        
+        
+        
+
+if __name__ == "__main__":
+    P = Parser("byw-cn-test-project-subjects.csv","byw-cn-test-project-classifications.csv")
+    P.printAccuracy()
+    
+    
         
         
     
