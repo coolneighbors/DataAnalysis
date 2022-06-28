@@ -23,6 +23,31 @@ class Parser:
         res = json.loads(string)
         return res
     
+    def getUsersForSubject(self,subID):
+        users = []
+        for cl in self.classifications_list:
+            classID = cl["subject_ids"]
+            
+            if subID == classID:
+                users.append(cl["user_name"])
+        return users
+    
+    def getUniqueUsers(self):
+        uniqueUsers = []
+        for cl in self.classifications_list:
+            if len(uniqueUsers) == 0:
+                uniqueUsers.append(cl["user_name"])
+            else:
+                isUnique = True
+                for u in uniqueUsers:
+                    if cl["user_name"] == u:
+                        isUnique = False
+                if isUnique:
+                    uniqueUsers.append(cl["user_name"])
+        return uniqueUsers
+    
+                
+    
     def printAccuracy(self):
         for sub_obj in self.subjects_list:
             sub = dict(sub_obj)
@@ -59,7 +84,6 @@ class Parser:
                         incorrectClass += 1
                     
             print(f"Subject {subID} was classified correctly {correctClass} times and incorrect {incorrectClass} times")
-        
 
     def targets_classificationsToList(self):
     
@@ -81,6 +105,10 @@ class Parser:
 if __name__ == "__main__":
     P = Parser("byw-cn-test-project-subjects.csv","byw-cn-test-project-classifications.csv")
     P.printAccuracy()
+    us = P.getUniqueUsers()
+    for u in us:
+        print(u)
+    
     
     
         
