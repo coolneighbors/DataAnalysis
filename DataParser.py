@@ -20,10 +20,38 @@ class Parser:
         
         
     def stringToJson(self,string):
+        '''
+        Converts a string (metadata) to a json
+
+        Parameters
+        ----------
+        string : String
+            Any dictionary formatted as a string.
+
+        Returns
+        -------
+        res : json object (dictionary)
+            A dictionary.
+
+        '''
         res = json.loads(string)
         return res
     
     def getUsersForSubject(self,subID):
+        '''
+        Returns users who contributed to a subject classification
+
+        Parameters
+        ----------
+        subID : string
+            ID of a particular subject of interest.
+
+        Returns
+        -------
+        users : list, strings
+            list of users who contributed to a subject classification.
+
+        '''
         users = []
         for cl in self.classifications_list:
             classID = cl["subject_ids"]
@@ -31,8 +59,18 @@ class Parser:
             if subID == classID:
                 users.append(cl["user_name"])
         return users
+        
     
     def getUniqueUsers(self):
+        '''
+        returns all unique users who contributed to a project
+
+        Returns
+        -------
+        uniqueUsers : list, string
+            list of all users who contributed to the project.
+
+        '''
         uniqueUsers = []
         for cl in self.classifications_list:
             if len(uniqueUsers) == 0:
@@ -46,11 +84,37 @@ class Parser:
                     uniqueUsers.append(cl["user_name"])
         return uniqueUsers
     
-                
+
+    def targets_classificationsToList(self):
     
+        sub_file = open(self.subject_file_string, mode='r')
+    
+        class_file = open(self.class_file_string, mode='r')
+        
+        self.subjects_list = copy.deepcopy(list(csv.DictReader(sub_file)))
+        self.classifications_list = copy.deepcopy(list(csv.DictReader(class_file)))
+        
+        class_file.close()
+        sub_file.close()
+        
+class testParser(Parser):
+    '''
+    Child class of parser, for Cool Neighbors test
+    '''
+    def __init__(self, subject_file_string_in,class_file_string_in):
+        super().__init__(subject_file_string_in,class_file_string_in)
+        
     def printAccuracy(self):
-        for sub_obj in self.subjects_list:
-            sub = dict(sub_obj)
+        '''
+        Compares known classifications (R/F) within the subjects hidden metadata to users classifications to determine accuracy.
+        
+        Only useful for this particular test
+        Returns
+        -------
+        None.
+
+        '''
+        for sub in self.subjects_list:
             subBool = None
             subID=sub["subject_id"]
             metadata_json = self.stringToJson(sub["metadata"])
@@ -84,18 +148,6 @@ class Parser:
                         incorrectClass += 1
                     
             print(f"Subject {subID} was classified correctly {correctClass} times and incorrect {incorrectClass} times")
-
-    def targets_classificationsToList(self):
-    
-        sub_file = open(self.subject_file_string, mode='r')
-    
-        class_file = open(self.class_file_string, mode='r')
-        
-        self.subjects_list = copy.deepcopy(list(csv.DictReader(sub_file)))
-        self.classifications_list = copy.deepcopy(list(csv.DictReader(class_file)))
-        
-        class_file.close()
-        sub_file.close()
         
         
         
@@ -103,7 +155,7 @@ class Parser:
         
 
 if __name__ == "__main__":
-    P = Parser("byw-cn-test-project-subjects.csv","byw-cn-test-project-classifications.csv")
+    P = testParser("byw-cn-test-project-subjects.csv","byw-cn-test-project-classifications.csv")
     P.printAccuracy()
     us = P.getUniqueUsers()
     for u in us:
