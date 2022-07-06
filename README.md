@@ -8,11 +8,14 @@ csv, json, and copy libraries (use pip or similar for installation)
 ## Usage
 Parser object(subject filename, classification filename0
 Current functionality: 
-	* Identifies users who contributed to a particular subjects classification
-	* Identifies all unique users who contributed to a project
+* Identifies users who contributed to a particular subjects classification
+* Identifies all unique users who contributed to a project
+* Identifies subjects that were classfied as "yes" more than a threshold number of times
 
 testParser, subclass of Parser
+
 Designed to work with 30 subject classification test for the Backyard Worlds: Cool Neighbors development
+
 Functionality: 
-	* printAccuracy -- Compares hidden subject #R/F metadata to user classifications to determine accuracy for each subject. Prints results to console.
+* printAccuracy -- Compares hidden subject #R/F metadata to user classifications to determine accuracy for each subject. Prints results to console.
 

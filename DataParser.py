@@ -84,21 +84,55 @@ class Parser:
         return uniqueUsers
     
     def classifySubjectByThreshold(self,threshold,subID):
-            yesCounter=0
-            for cl in self.classifications_list:
-                classID=cl["subject_ids"]
+        '''
+        iterates through classification list to find matches to a particular subect. Counts how many times each matching classification marks the subject as a mover. If its above a threshold, returns true
 
-                
-                if classID == subID:
-                    anno = self.stringToJson(cl["annotations"])
-                    if anno[0]["value"] == "Yes":
-                        yesCounter+=1
-            if yesCounter >= threshold:
-                return True, yesCounter
-            else:
-                return False, 0
-    
+        Parameters
+        ----------
+        threshold : integer
+            classification threshold.
+        subID : string
+            ID of a particular subject that is being matched.
+
+        Returns
+        -------
+        bool
+            true or false, has the number of classifications passed the threshold.
+        yesCounter: int
+            number of times the classifications were "Yes".
+
+        '''
+        yesCounter=0
+        for cl in self.classifications_list:
+            classID=cl["subject_ids"]
+
+            
+            if classID == subID:
+                anno = self.stringToJson(cl["annotations"])
+                if anno[0]["value"] == "Yes":
+                    yesCounter+=1
+        if yesCounter >= threshold:
+            return True, yesCounter
+        else:
+            return False, 0
+
     def classifyAllSubjects(self,threshold):
+        '''
+        Iterates through all subjects and classifications, determines how many times each subject was classified as a mover. If the number of classifications is above
+        a set threshold, returns the subject as a likely mover
+
+        Parameters
+        ----------
+        threshold : Integer
+            Number of times a subject must be classified as "yes" for it to be counted as a mover
+
+        Returns
+        -------
+        movers : Nx2 list
+            index [i][0] is the subject ID of the mover
+            idex [i][1] is the number of times the mover was classified as "Yes"
+
+        '''
         movers=[]
 
         for sub in self.subjects_list:
