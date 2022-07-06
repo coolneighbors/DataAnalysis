@@ -58,8 +58,7 @@ class Parser:
             
             if subID == classID:
                 users.append(cl["user_name"])
-        return users
-        
+        return users    
     
     def getUniqueUsers(self):
         '''
@@ -84,7 +83,33 @@ class Parser:
                     uniqueUsers.append(cl["user_name"])
         return uniqueUsers
     
+    def classifySubjectByThreshold(self,threshold,subID):
+            yesCounter=0
+            for cl in self.classifications_list:
+                classID=cl["subject_ids"]
 
+                
+                if classID == subID:
+                    anno = self.stringToJson(cl["annotations"])
+                    if anno[0]["value"] == "Yes":
+                        yesCounter+=1
+            if yesCounter >= threshold:
+                return True, yesCounter
+            else:
+                return False, 0
+    
+    def classifyAllSubjects(self,threshold):
+        movers=[]
+
+        for sub in self.subjects_list:
+            subID=sub["subject_id"]
+            isMover, numYes = self.classifySubjectByThreshold(threshold,subID)
+            if isMover:
+                mov=[subID,numYes]
+                movers.append(mov)
+        return movers
+        
+    
     def targets_classificationsToList(self):
     
         sub_file = open(self.subject_file_string, mode='r')
@@ -156,8 +181,11 @@ class testParser(Parser):
 
 if __name__ == "__main__":
     P = testParser("byw-cn-test-project-subjects.csv","byw-cn-test-project-classifications.csv")
-    P.printAccuracy()
+    #P.printAccuracy()
+    ms= P.classifyAllSubjects(threshold=2)
     us = P.getUniqueUsers()
+    for m in ms:
+        print(m[0] + " was classified as a mover " + str(m[1]) + " times")
     for u in us:
         print(u)
     
