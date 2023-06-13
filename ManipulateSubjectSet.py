@@ -8,20 +8,10 @@ from unWISE_verse.Spout import Spout
 from Discriminator import SubjectDiscriminator, CSVDiscriminator, SubjectCSVDiscriminator
 
 # Login
-if(Login.loginExists()):
-    login = Login.load()
-    print("Login credentials loaded.")
-else:
-    print("Please enter your Zooniverse credentials.")
-    username = getpass.getpass(prompt='Username: ', stream=sys.stdin)
-    password = getpass.getpass(prompt='Password: ', stream=sys.stdin)
-
-    login = Login(username=username, password=password)
-    login.save()
+login = Spout.requestLogin()
 
 # IDs
-project_id = int(getpass.getpass(prompt='Project ID: ', stream=sys.stdin))
-subject_set_id = int(getpass.getpass(prompt='Subject Set ID: ', stream=sys.stdin))
+project_id, subject_set_id = Spout.requestZooniverseIDs()
 
 # Spout
 display_printouts = True
@@ -33,28 +23,6 @@ print(f"Subject Set: {subject_set}")
 discriminator = SubjectDiscriminator(subject_set)
 print("Discriminator created.")
 
-def in_targets_file(TARGET_ID):
-    TARGET_ID = int(TARGET_ID)
-    target_filename = ""
-    with open(target_filename, newline='') as targets_file:
-        reader = csv.DictReader(targets_file)
-        for row in reader:
-            if(TARGET_ID == int(row["TARGET ID"])):
-                return True
-    return False
-
-def not_in_targets_file(TARGET_ID):
-    TARGET_ID = int(TARGET_ID)
-    target_filename = ""
-    with open(target_filename, newline='') as targets_file:
-        reader = csv.DictReader(targets_file)
-        for row in reader:
-            if(TARGET_ID == int(row["TARGET ID"])):
-                return False
-    return True
-
-def all_subjects():
-    return True
 
 valid_subject_list = discriminator.findValidSubjects(all_subjects, display_printouts=True)
 print(f"Valid Subject List: {valid_subject_list}")
