@@ -1,11 +1,16 @@
-# DataAnalysis
+# DataToolkit
+
+DataParser:
 
 A simple parsing object which allows users to extract data from zooniverse classifications. Requires a classifications and subject file as exported from zooniverse.
 
 ## Dependencies
 csv, json, and copy libraries (use pip or similar for installation)
 
-## Usage
+## Usages
+
+DataParser:
+
 Parser object(subject filename, classification filename0
 Current functionality: 
 * Identifies users who contributed to a particular subjects classification

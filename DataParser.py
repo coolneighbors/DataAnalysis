@@ -10,16 +10,14 @@ import json
 import copy
 
 class Parser:
-    def __init__(self, subject_file_string_in,class_file_string_in):
+    def __init__(self, subject_file_string_in, class_file_string_in):
         
         self.class_file_string = class_file_string_in
         self.subject_file_string = subject_file_string_in
         
         self.targets_classificationsToList()
-        
-        
-        
-    def stringToJson(self,string):
+
+    def stringToJson(self, string):
         '''
         Converts a string (metadata) to a json
 
@@ -34,10 +32,11 @@ class Parser:
             A dictionary.
 
         '''
+
         res = json.loads(string)
         return res
     
-    def getUsersForSubject(self,subID):
+    def getUsersForSubject(self, subID):
         '''
         Returns users who contributed to a subject classification
 
@@ -83,7 +82,7 @@ class Parser:
                     uniqueUsers.append(cl["user_name"])
         return uniqueUsers
     
-    def classifySubjectByThreshold(self,threshold,subID):
+    def classifySubjectByThreshold(self, threshold, subID):
         '''
         iterates through classification list to find matches to a particular subect. Counts how many times each matching classification marks the subject as a mover. If its above a threshold, returns true
 
@@ -116,7 +115,7 @@ class Parser:
         else:
             return False, 0
 
-    def classifyAllSubjects(self,threshold):
+    def classifyAllSubjects(self, threshold):
         '''
         Iterates through all subjects and classifications, determines how many times each subject was classified as a mover. If the number of classifications is above
         a set threshold, returns the subject as a likely mover
@@ -160,6 +159,7 @@ class testParser(Parser):
     '''
     Child class of parser, for Cool Neighbors test
     '''
+    
     def __init__(self, subject_file_string_in,class_file_string_in):
         super().__init__(subject_file_string_in,class_file_string_in)
         
@@ -222,12 +222,4 @@ if __name__ == "__main__":
         print(m[0] + " was classified as a mover " + str(m[1]) + " times")
     for u in us:
         print(u)
-    
-    
-    
-        
-        
-    
-        
-
-    
+    P.printAccuracy()
