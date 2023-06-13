@@ -4,7 +4,7 @@ import sys
 
 from unWISE_verse.Login import Login
 from unWISE_verse.Spout import Spout
-
+from ConditionalFunctions import *
 from Discriminator import SubjectDiscriminator, CSVDiscriminator, SubjectCSVDiscriminator
 
 # Login
