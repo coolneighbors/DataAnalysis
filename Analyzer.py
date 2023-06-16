@@ -1,10 +1,13 @@
 import datetime
 import os
 import pickle
+import warnings
 
 import pandas as pd
 import webbrowser
 import matplotlib.pyplot as plt
+from astropy.coordinates import SkyCoord
+import astropy.units as u
 
 from unWISE_verse.Spout import Spout
 
@@ -533,6 +536,77 @@ class Analyzer:
 
         # Return the WiseView link
         return wise_view_link
+
+    def isInSIMBAD(self, subject_id):
+        """
+        Determines whether or not the subject is in SIMBAD.
+
+        Parameters
+        ----------
+        subject_id : str, int
+            The ID of the subject to check.
+
+        Returns
+        -------
+        in_simbad : bool
+            Whether or not the subject is in SIMBAD.
+        """
+
+        # Get the subject's metadata
+        simbad_link = self.getSubjectMetadataField(subject_id, "SIMBAD")
+
+        if(simbad_link is None):
+            return None
+
+        # Remove the SIMBAD link prefix and suffix
+        simbad_link = simbad_link.removeprefix("[SIMBAD](+tab+")
+        simbad_link = simbad_link.removesuffix(")")
+
+        def extract_coordinates_from_link(link):
+            # Extract the coordinate section from the link
+            coord_start = link.find("Coord=") + len("Coord=")
+            coord_end = link.find("&", coord_start)
+            coordinate_section = link[coord_start:coord_end]
+
+            # Split the coordinate section into RA and DEC
+            ra, dec = coordinate_section.split("+")
+
+            return float(ra), float(dec)
+
+        def extract_radius_from_link(link):
+            # Find the index of "Radius=" in the link
+            radius_start = link.find("Radius=") + len("Radius=")
+
+            # Find the index of "&" after the radius value
+            radius_end = link.find("&", radius_start)
+
+            # Extract the radius value
+            radius = link[radius_start:radius_end]
+
+            return float(radius)
+
+        # Get RA and Dec from the SIMBAD link
+        RA, DEC = extract_coordinates_from_link(simbad_link)
+
+        # Get the radius from the SIMBAD link
+        radius = extract_radius_from_link(simbad_link)
+
+        import astroquery.simbad as astro_simbad
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            if (DEC > 0):
+                result_table = astro_simbad.Simbad.query_criteria(f"region(CIRCLE, ICRS, {RA} +{DEC}, {radius}s)")
+            else:
+                result_table = astro_simbad.Simbad.query_criteria(f"region(CIRCLE, ICRS, {RA} {DEC}, {radius}s)")
+
+        if(result_table is None):
+            return False
+        else:
+            return True
+
+    # TODO: Add additional inDATABASENAME functions to check if the subject is in other databases, then add a function
+    #  which checks if the subject is in any of the databases. If not, it is likely a newly discovered object.
 
     @staticmethod
     def bitmaskToType(bitmask):
