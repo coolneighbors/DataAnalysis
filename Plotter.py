@@ -6,10 +6,45 @@ from matplotlib import pyplot as plt
 
 class Plotter:
     def __init__(self, ra_values, dec_values):
+        """
+        Initializes a Plotter object. This object is used to plot a set of RA and DEC values on a sky-map scatter plot.
+
+        Parameters
+        ----------
+            ra_values : list
+                A list of RA values to plot.
+            dec_values : list
+                A list of DEC values to plot.
+        Notes
+        -----
+            The RA and DEC values are assumed to be in degrees.
+            RA values are should be in the range [-180, 180].
+            DEC values are should be to be in the range [-90, 90].
+            However, the Plotter object will automatically correct any values outside of these ranges.
+        """
+
         self.ra_values = ra_values
         self.dec_values = dec_values
 
     def projection_convert(self, ra, dec):
+        """
+        Converts RA and DEC values into their proper ranges and converts them from degrees to radians,
+        as required by the matplotlib projection.
+
+        Parameters
+        ----------
+            ra : float, list
+                The RA value(s) to convert.
+            dec : float, list
+                The DEC value(s) to convert.
+        Returns
+        -------
+            ra : float, str, list
+                The converted RA value(s).
+            dec : float, str, list
+                The converted DEC value(s).
+        """
+
         ra = copy(ra)
         dec = copy(dec)
 
@@ -34,7 +69,26 @@ class Plotter:
 
         return ra, dec
 
-    def plot(self, scatter_plot_kwargs, projection='mollweide', show=True):
+    def plot(self, projection='mollweide', show=True, **scatter_plot_kwargs):
+        """
+        Plots the RA and DEC values on a sky-map scatter plot.
+
+        Parameters
+        ----------
+            projection : str
+                The projection to use for the sky-map scatter plot.
+                The default projection is 'mollweide'.
+            show : bool
+                Whether or not to show the plot after it is created.
+                The default value is True.
+            scatter_plot_kwargs : dict
+                Any additional keyword arguments to pass to the scatter plot.
+                The default values are:
+                    s = 1
+                    color = 'blue'
+                    alpha = 0.5
+        """
+
         if len(plt.gcf().axes) == 0:
             fig = plt.gcf()
             ax = fig.add_subplot(1, 1, 1, projection=projection)
@@ -59,10 +113,53 @@ class Plotter:
 
 class CSVPlotter(Plotter):
     def __init__(self, csv_filename, ra_column_name='RA', dec_column_name='DEC'):
+        """
+        Initializes a CSVPlotter object. This object is used to plot a set of RA and DEC values on a
+        sky-map scatter plot from a CSV file.
+
+        Parameters
+        ----------
+            csv_filename : str
+                The name of the CSV file to read the RA and DEC values from.
+            ra_column_name : str
+                The name of the column in the CSV file that contains the RA values.
+                The default value is 'RA'.
+            dec_column_name : str
+                The name of the column in the CSV file that contains the DEC values.
+                The default value is 'DEC'.
+        Notes
+        -----
+            The RA and DEC values are assumed to be in degrees.
+            RA values are should be in the range [-180, 180].
+            DEC values are should be to be in the range [-90, 90].
+            However, the CSVPlotter object will automatically correct any values outside of these ranges.
+        """
+
         self.ra_values, self.dec_values = self.extract_ra_dec_from_csv(csv_filename, ra_column_name, dec_column_name)
         super().__init__(self.ra_values, self.dec_values)
 
     def extract_ra_dec_from_csv(self, csv_filename, ra_header='RA', dec_header='DEC'):
+        """
+        Extracts the RA and DEC values from a CSV file.
+
+        Parameters
+        ----------
+            csv_filename : str
+                The name of the CSV file to read the RA and DEC values from.
+            ra_header : str
+                The name of the column in the CSV file that contains the RA values.
+                The default value is 'RA'.
+            dec_header : str
+                The name of the column in the CSV file that contains the DEC values.
+                The default value is 'DEC'.
+        Returns
+        -------
+            ra_list : list
+                A list of RA values.
+            dec_list : list
+                A list of DEC values.
+        """
+
         ra_list = []
         dec_list = []
 
@@ -80,16 +177,59 @@ class CSVPlotter(Plotter):
 
 class SubjectPlotter(Plotter):
     def __init__(self, subjects, ra_metadata_name='RA', dec_metadata_name='DEC'):
+        """
+        Initializes a SubjectPlotter object. This object is used to plot a set of RA and DEC values on a
+        sky-map scatter plot from a list of subjects.
+
+        Parameters
+        ----------
+            subjects : list
+                A list of subjects to extract the RA and DEC values from.
+            ra_metadata_name : str
+                The name of the metadata field in the subjects that contains the RA values.
+                The default value is 'RA'.
+            dec_metadata_name : str
+                The name of the metadata field in the subjects that contains the DEC values.
+                The default value is 'DEC'.
+        Notes
+        -----
+            The RA and DEC values are assumed to be in degrees.
+            RA values are should be in the range [-180, 180].
+            DEC values are should be to be in the range [-90, 90].
+            However, the SubjectPlotter object will automatically correct any values outside of these ranges.
+        """
+
         self.ra_values, self.dec_values = self.extract_ra_dec_from_subjects(subjects, ra_metadata_name, dec_metadata_name)
         super().__init__(self.ra_values, self.dec_values)
 
-    def extract_ra_dec_from_subjects(self, subjects, ra_header='RA', dec_header='DEC'):
+    def extract_ra_dec_from_subjects(self, subjects, ra_field_name='RA', dec_field_name='DEC'):
+        """
+        Extracts the RA and DEC values from a list of subjects.
+
+        Parameters
+        ----------
+            subjects : list
+                A list of subjects to extract the RA and DEC values from.
+            ra_field_name : str
+                The name of the metadata field in the subjects that contains the RA values.
+                The default value is 'RA'.
+            dec_field_name : str
+                The name of the metadata field in the subjects that contains the DEC values.
+                The default value is 'DEC'.
+        Returns
+        -------
+            ra_list : list
+                A list of RA values.
+            dec_list : list
+                A list of DEC values.
+        """
+
         ra_list = []
         dec_list = []
 
         for subject in subjects:
-            ra = subject.metadata.get(ra_header)
-            dec = subject.metadata.get(dec_header)
+            ra = subject.metadata.get(ra_field_name)
+            dec = subject.metadata.get(dec_field_name)
             ra_list.append(float(ra))
             dec_list.append(float(dec))
 
@@ -97,10 +237,53 @@ class SubjectPlotter(Plotter):
 
 class SubjectCSVPlotter(Plotter):
     def __init__(self, subject_csv, ra_metadata_name='RA', dec_metadata_name='DEC'):
+        """
+        Initializes a SubjectCSVPlotter object. This object is used to plot a set of RA and DEC values on a
+        sky-map scatter plot from a CSV file containing subject metadata.
+
+        Parameters
+        ----------
+            subject_csv : str
+                The name of the CSV file to read the RA and DEC values from.
+            ra_metadata_name : str
+                The name of the metadata field in the subjects that contains the RA values.
+                The default value is 'RA'.
+            dec_metadata_name : str
+                The name of the metadata field in the subjects that contains the DEC values.
+                The default value is 'DEC'.
+        Notes
+        -----
+            The RA and DEC values are assumed to be in degrees.
+            RA values are should be in the range [-180, 180].
+            DEC values are should be to be in the range [-90, 90].
+            However, the SubjectCSVPlotter object will automatically correct any values outside of these ranges.
+        """
+
         self.ra_values, self.dec_values = self.extract_ra_dec_from_subject_csv(subject_csv, ra_metadata_name, dec_metadata_name)
         super().__init__(self.ra_values, self.dec_values)
 
-    def extract_ra_dec_from_subject_csv(self, subject_csv, ra_header='RA', dec_header='DEC'):
+    def extract_ra_dec_from_subject_csv(self, subject_csv, ra_field_name='RA', dec_field_name='DEC'):
+        """
+        Extracts the RA and DEC values from a CSV file.
+
+        Parameters
+        ----------
+            subject_csv : str
+                The name of the CSV file to read the RA and DEC values from.
+            ra_field_name : str
+                The name of the metadata field in the subjects that contains the RA values.
+                The default value is 'RA'.
+            dec_field_name : str
+                The name of the metadata field in the subjects that contains the DEC values.
+                The default value is 'DEC'.
+        Returns
+        -------
+            ra_list : list
+                A list of RA values.
+            dec_list : list
+                A list of DEC values.
+        """
+
         ra_list = []
         dec_list = []
 
@@ -109,9 +292,10 @@ class SubjectCSVPlotter(Plotter):
 
             for row in reader:
                 metadata = eval(row.get('metadata'))
-                ra = metadata.get(ra_header)
-                dec = metadata.get(dec_header)
+                ra = metadata.get(ra_field_name)
+                dec = metadata.get(dec_field_name)
                 ra_list.append(float(ra))
                 dec_list.append(float(dec))
 
         return ra_list, dec_list
+

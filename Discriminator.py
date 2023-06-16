@@ -5,11 +5,44 @@ import unWISE_verse
 from unWISE_verse import Data
 import pickle
 
+from unWISE_verse.Spout import Spout
+
+
 class Discriminator:
     def __init__(self, metadata_list):
+        """
+        Initializes a Discriminator object. This object is used to filter metadata objects based on a functional condition.
+
+        Parameters
+        ----------
+            metadata_list : list
+                A list of Metadata objects.
+        """
+
         self.metadata_list = metadata_list
 
     def findValidMetadata(self, functional_condition, *field_names):
+        """
+        Finds all metadata objects that satisfy the functional condition.
+
+        Parameters
+        ----------
+            functional_condition : function
+                A function that takes in the values of the fields that you want to filter by and returns a boolean value.
+            field_names : tuple, strings, optional
+                The names of the fields that you want to filter by.
+
+        Returns
+        -------
+            valid_metadata_list : list
+                A list of Metadata objects that satisfy the functional condition.
+        Notes
+        -----
+            The functional condition must be a function that takes in the values of the fields that you want to filter by
+            and returns a boolean value. The functional condition must return a boolean value. If the functional condition
+            returns None, an exception will be raised.
+        """
+
         valid_metadata_list = []
         for metadata in self.metadata_list:
             if self.isValid(metadata, functional_condition, *field_names):
@@ -17,6 +50,24 @@ class Discriminator:
         return valid_metadata_list
 
     def isValid(self, metadata, functional_condition, *field_names):
+        """
+        Determines whether or not a metadata object satisfies the functional condition.
+
+        Parameters
+        ----------
+            metadata : Metadata
+                The metadata object that you want to check.
+            functional_condition : function
+                A function that takes in the values of the fields that you want to filter by and returns a boolean value.
+            field_names : tuple, strings, optional
+                The names of the fields that you want to filter by.
+
+        Returns
+        -------
+            result : bool
+                True if the metadata object satisfies the functional condition. False otherwise.
+        """
+
         for field_name in field_names:
             if not metadata.hasField(field_name):
                 return False
@@ -36,17 +87,56 @@ class Discriminator:
 
     @staticmethod
     def saveResult(list, filename):
+        """
+        Saves a list of objects to a file.
+
+        Parameters
+        ----------
+            list : list
+                The list of objects that you want to save.
+            filename : str
+                The name of the file that you want to save the list to.
+        """
+
         with open(filename, 'wb') as file:
             pickle.dump(list, file)
 
     @staticmethod
     def loadResult(filename):
+        """
+        Loads a list of objects from a file.
+
+        Parameters
+        ----------
+            filename : str
+                The name of the file that you want to load the list from.
+
+        Returns
+        -------
+            list : list
+                The list of objects that you loaded from the file.
+        """
+
         with open(filename, 'rb') as file:
             list = pickle.load(file)
             return list
 
 class SubjectDiscriminator(Discriminator):
     def __init__(self, subject_set):
+        """
+        Initializes a SubjectDiscriminator object. This object is used to filter subject objects (from a subject set)
+        based on a functional condition.
+
+        Parameters
+        ----------
+            subject_set : SubjectSet
+                The subject set that you want to filter subjects from.
+
+        Notes
+        -----
+            The subject set must be a subject set that you have already created in the Zooniverse project.
+        """
+
         self.subject_list = []
         for index, subject in enumerate(subject_set.subjects):
             if (index % 1000 == 0 and index != 0):
@@ -62,10 +152,44 @@ class SubjectDiscriminator(Discriminator):
         super().__init__(self.metadata_list)
 
     def getSubjectMetadata(self, subject):
+        """
+        Gets the metadata of a subject.
+
+        Parameters
+        ----------
+            subject : Subject
+                The subject that you want to get the metadata of.
+
+        Returns
+        -------
+            metadata : Metadata
+                The metadata of the subject.
+        """
+
         metadata = Data.Metadata.createFromDictionary(subject.metadata)
         return metadata
 
     def findValidSubjects(self, functional_condition, *field_names, subject_as_input=False, display_printouts=True):
+        """
+        Finds all subjects that satisfy the functional condition.
+
+        Parameters
+        ----------
+            functional_condition : function
+                A function that takes in the values of the fields that you want to filter by and returns a boolean value.
+            field_names : tuple, strings, optional
+                The names of the fields that you want to filter by.
+            subject_as_input : bool, optional
+                True if you want to pass in the subject object as an input to the functional condition. False otherwise.
+            display_printouts : bool, optional
+                True if you want to display printouts. False otherwise.
+
+        Returns
+        -------
+            valid_subject_list : list
+                A list of subjects that satisfy the functional condition.
+        """
+
         valid_subject_list = []
         if(subject_as_input):
             if(len(field_names) != 0):
@@ -91,16 +215,18 @@ class SubjectDiscriminator(Discriminator):
         return valid_subject_list
 
     @staticmethod
-    def getSubjectFromSubjectSet(subject_set_id, subject_id):
-        if(subject_set_id is None):
-            for sms in SetMemberSubject.where(subject_id=subject_id):
-                return sms.links.subject
-        else:
-            for sms in SetMemberSubject.where(subject_set_id=subject_set_id, subject_id=subject_id):
-                return sms.links.subject
-
-    @staticmethod
     def saveResult(subject_list, filename):
+        """
+        Saves a list of subject ids to a file.
+
+        Parameters
+        ----------
+            subject_list : list
+                The list of subjects that you want to save.
+            filename : str
+                The name of the file that you want to save the list to.
+        """
+
         subject_id_list = []
         for subject in subject_list:
             subject_id_list.append(subject.id)
@@ -109,17 +235,46 @@ class SubjectDiscriminator(Discriminator):
 
     @staticmethod
     def loadResult(filename):
+        """
+        Loads a list of subject ids from a file and returns the associated list of subject objects.
+
+        Parameters
+        ----------
+            filename : str
+                The name of the file that you want to load the list from.
+
+        Returns
+        -------
+            subject_list : list
+                The list of subjects that you loaded from the file.
+        """
+
         with open(filename, 'rb') as file:
             list = pickle.load(file)
             subject_list = []
             for index, subject_id in enumerate(list):
                 if(index % min(int(len(list)/10), 1000) == 0 and index != 0):
                     print(f"Loaded {index} subjects.")
-                subject_list.append(SubjectDiscriminator.getSubjectFromSubjectSet(None, subject_id))
+                subject_list.append(Spout.get_subject(subject_id))
             return subject_list
 
     @staticmethod
     def convertToCSV(subject_list, filename):
+        """
+        Converts a list of subjects to a CSV file.
+
+        Parameters
+        ----------
+            subject_list : list
+                The list of subjects that you want to convert to a CSV file.
+            filename : str
+                The name of the CSV file that you want to save the list to.
+
+        Notes
+        -----
+            The CSV file will also contain all of the fields in the subject objects' metadata dictionary.
+        """
+
         with open(filename, mode="w", newline='') as csv_file:
             fieldnames = subject_list[0].__dict__.keys() | subject_list[0].metadata.keys()
             csv_writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
@@ -130,6 +285,15 @@ class SubjectDiscriminator(Discriminator):
 
 class CSVDiscriminator(Discriminator):
     def __init__(self, csv_path):
+        """
+        Creates a CSV discriminator. This discriminator will load a CSV file and use it to filter the rows.
+
+        Parameters
+        ----------
+            csv_path : str
+                The path to the CSV file that you want to load.
+        """
+
         self.csv_path = csv_path
         self.metadata_list = []
         with open(csv_path, "r", newline='') as csv_file:
@@ -141,12 +305,38 @@ class CSVDiscriminator(Discriminator):
 
 class SubjectCSVDiscriminator(CSVDiscriminator):
     def __init__(self, subject_set, csv_path):
+        """
+        Creates a subject CSV discriminator. This discriminator will load a CSV file and use it to filter the rows,
+        where each row corresponds to a subject.
+
+        Parameters
+        ----------
+            subject_set : panoptes_client.SubjectSet
+                The subject set that you want to filter by.
+            csv_path : str
+                The path to the CSV file that you want to load, where each row corresponds to a subject.
+        """
+
         self.subject_set = subject_set
         reduced_csv_path = self.reduceCSV(csv_path)
         expanded_csv_path = self.expandCSV(reduced_csv_path)
         super().__init__(expanded_csv_path)
 
     def reduceCSV(self, csv_path):
+        """
+        Reduces a CSV file to only contain rows that correspond to subjects in the subject set.
+
+        Parameters
+        ----------
+            csv_path : str
+                The path to the CSV file that you want to reduce.
+
+        Returns
+        -------
+            reduced_csv_path : str
+                The path to the reduced CSV file.
+        """
+
         reduced_csv_path = csv_path.replace(".csv", "_reduced.csv")
         with open(csv_path, "r", newline='') as csv_file:
             csv_reader = csv.DictReader(csv_file)
@@ -159,6 +349,20 @@ class SubjectCSVDiscriminator(CSVDiscriminator):
         return reduced_csv_path
 
     def expandCSV(self, csv_path):
+        """
+        Expands a CSV file to include all of the fields in the subject objects' metadata dictionary.
+
+        Parameters
+        ----------
+            csv_path : str
+                The path to the CSV file that you want to expand.
+
+        Returns
+        -------
+            expanded_csv_path : str
+                The path to the expanded CSV file.
+        """
+
         expanded_csv_path = csv_path.replace(".csv", "_expanded.csv")
         with open(expanded_csv_path, mode="w", newline='') as expanded_csv_file:
             expanded_csv_reader = None
@@ -185,10 +389,28 @@ class SubjectCSVDiscriminator(CSVDiscriminator):
         return expanded_csv_path
 
     def findValidSubjects(self, functional_condition, *field_names, display_printouts=True):
+        """
+        Finds all of the subjects in the subject set that satisfy the functional condition.
+
+        Parameters
+        ----------
+            functional_condition : function
+                The function that you want to use to filter the subjects.
+            field_names : str
+                The names of the fields that you want to use to filter the subjects.
+            display_printouts : bool
+                Whether or not you want to display printouts.
+
+        Returns
+        -------
+            valid_subject_list : list
+                A list of the subjects that satisfy the functional condition.
+        """
+
         valid_subject_list = []
         for index, metadata in enumerate(self.metadata_list):
             if self.isValid(metadata, functional_condition, *field_names):
-                subject = SubjectDiscriminator.getSubjectFromSubjectSet(self.subject_set.id, metadata.getFieldValue("subject_id"))
+                subject = Spout.get_subject(metadata.getFieldValue("subject_id"), self.subject_set.id)
                 valid_subject_list.append(subject)
                 if display_printouts:
                     print(f"Subject with TARGET ID {metadata.getFieldValue('TARGET ID')} is valid.")
@@ -198,12 +420,53 @@ class SubjectCSVDiscriminator(CSVDiscriminator):
 
     @staticmethod
     def saveResult(subject_list, filename):
+        """
+        Saves the result of a subject list to a CSV file.
+
+        Parameters
+        ----------
+            subject_list : list
+                The list of subjects that you want to save.
+            filename : str
+                The name of the file that you want to save the subjects to.
+        """
+
         SubjectDiscriminator.saveResult(subject_list, filename)
 
     @staticmethod
     def loadResult(filename):
+        """
+        Loads the result of a subject list from a CSV file.
+
+        Parameters
+        ----------
+            filename : str
+                The name of the file that you want to load the subjects from.
+
+        Returns
+        -------
+            subject_list : list
+                The list of subjects that you want to load.
+        """
+
         return SubjectDiscriminator.loadResult(filename)
 
     @staticmethod
     def convertToCSV(subject_list, filename):
+        """
+        Converts a subject list to a CSV file.
+
+        Parameters
+        ----------
+            subject_list : list
+                The list of subjects that you want to convert.
+            filename : str
+                The name of the file that you want to convert the subjects to.
+
+        Returns
+        -------
+            subject_list : list
+                The list of subjects that you want to convert.
+        """
+
         SubjectDiscriminator.convertToCSV(subject_list, filename)
