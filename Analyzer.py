@@ -25,7 +25,9 @@ class Analyzer:
                 Whether or not to save the login information to a file, including Zooniverse IDs. Default is True.
         Notes
         -----
-
+        This class is used to analyze the extracted and reduced classifications from a Zooniverse project.
+        The extracted classifications file is a CSV file containing all of the classifications made by all users.
+        The reduced classifications file is a CSV file containing the reduced classifications for each subject.
         """
 
         self.extracted_file = extracted_file
