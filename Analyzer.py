@@ -29,7 +29,8 @@ class Analyzer:
         The extracted classifications file is a CSV file containing all of the classifications made by all users.
         The reduced classifications file is a CSV file containing the reduced classifications for each subject.
         """
-
+        
+        # Initialize variables
         self.extracted_file = extracted_file
         self.reduced_file = reduced_file
         self.extracted_dataframe = pd.read_csv(self.extracted_file)
@@ -53,13 +54,13 @@ class Analyzer:
         but with different Zooniverse IDs, delete the zooniverse_ids.pickle file.
         """
 
-        # Login
+        # Get login
         login = Spout.requestLogin(save=save)
 
-        # IDs
+        # Get Zooniverse IDs
         project_id, self.subject_set_id = Spout.requestZooniverseIDs(save=save)
 
-        # Create Spout object to access Zooniverse project
+        # Create Spout object to access the Zooniverse project
         Spout(project_identifier=project_id, login=login, display_printouts=True)
 
     def getUniqueUsers(self):
@@ -70,7 +71,8 @@ class Analyzer:
         -------
         unique_users : list, strings
         """
-
+        
+        # Return the list of unique users
         return self.extracted_dataframe["user_name"].unique()
 
     def getClassificationsCount(self):
@@ -82,7 +84,8 @@ class Analyzer:
         count : int
             The total number of classifications in the extracted classifications file.
         """
-
+        
+        # Return the number of classifications
         return len(self.extracted_dataframe)
 
     def getUserClassifications(self, user_id):
@@ -99,11 +102,14 @@ class Analyzer:
         user_classifications : pandas.DataFrame
             The extracted dataframe of all classifications made by that user.
         """
-
+        # Check if the user_id is a string or an integer
         if(isinstance(user_id, str)):
+            # If it's a string, then it's a username
             user_name = user_id
+            
             return self.extracted_dataframe[self.extracted_dataframe["user_name"] == user_name]
         else:
+            # If it's an integer, then it's a Zooniverse ID
             return self.extracted_dataframe[self.extracted_dataframe["user_id"] == user_id]
 
     def getUserClassificationsCount(self, user_id):
@@ -120,7 +126,8 @@ class Analyzer:
         count : int
             The total number of classifications made by that user.
         """
-
+        
+        # Return the number of classifications made by that user
         return len(self.getUserClassifications(user_id))
 
     def getSubjectIDs(self):
@@ -137,10 +144,11 @@ class Analyzer:
         This method is useful for iterating over all unique subjects.
         This will not include duplicates, such as would be found in the extracted classifications file.
         """
-
+        
+        # Return the list of subject IDs
         return self.reduced_dataframe["subject_id"].values
 
-    def getSubjectRow(self, subject_id, reduced=True):
+    def getSubjectDataframe(self, subject_id, reduced=True):
         """
         Provides the reduced dataframe of the classifications made for a particular subject.
 
@@ -153,14 +161,17 @@ class Analyzer:
 
         Returns
         -------
-        subject_row : pandas.DataFrame
+        subject_dataframe : pandas.DataFrame
             The reduced (or extracted) dataframe of the classifications made for that subject.
 
         """
-
+        
+        # Check if the the subject row should be taken from the reduced or the extracted dataframe
         if(reduced):
+            # If reduced, then return the reduced dataframe for that subject
             return self.reduced_dataframe[self.reduced_dataframe["subject_id"] == int(subject_id)]
         else:
+            # If not reduced, then return the extracted dataframe for that subject
             return self.extracted_dataframe[self.extracted_dataframe["subject_id"] == int(subject_id)]
 
     def subjectClassifications(self, subject_id):
@@ -178,17 +189,24 @@ class Analyzer:
             A dictionary of the number of "yes" and "no" classifications for that subject.
         """
 
-        subject_row = self.getSubjectRow(subject_id)
+        # Get the subject's dataframe
+        subject_dataframe = self.getSubjectDataframe(subject_id)
+
         try:
-            yes_count = int(subject_row["data.yes"].values[0])
+            # Try to get the number of "yes" classifications
+            yes_count = int(subject_dataframe["data.yes"].values[0])
         except ValueError:
+            # If there are no "yes" classifications, then set the count to 0
             yes_count = 0
 
         try:
-            no_count = int(subject_row["data.no"].values[0])
+            # Try to get the number of "no" classifications
+            no_count = int(subject_dataframe["data.no"].values[0])
         except ValueError:
+            # If there are no "no" classifications, then set the count to 0
             no_count = 0
 
+        # Return the dictionary of the number of "yes" and "no" classifications
         return {"yes": yes_count, "no": no_count}
 
     def plotSubjectClassifications(self, subject_id):
@@ -206,13 +224,21 @@ class Analyzer:
         In particular, this helps easily see whether or not a subject has been classified as a "yes" or "no" more often.
         """
 
+        # Get the number of "yes" and "no" classifications for that subject as a dictionary
         classification_dict = self.subjectClassifications(subject_id)
+
+        # Get the number of "yes" and "no" classifications from the dictionary
         yes_count = classification_dict["yes"]
         no_count = classification_dict["no"]
+
+        # Compute the total number of classifications
         total_count = yes_count + no_count
+
+        # Compute the percentage of "yes" and "no" classifications
         yes_percent = yes_count / total_count
         no_percent = no_count / total_count
 
+        # Plot the pie chart
         plt.pie([yes_percent, no_percent], labels=["Yes", "No"], autopct='%1.1f%%')
         plt.axis('equal')
         plt.title("Subject ID: " + str(subject_id) + " Classifications")
@@ -234,20 +260,45 @@ class Analyzer:
         There is an upper time limit of 5 minutes between classifications when computing the average time.
         """
 
+        # Get the unique user names
         user_names = self.getUniqueUsers()
+
+        # Initialize the list of classification times
         users_classification_times = []
+
+        # Iterate over all unique usernames
         for user_name in user_names:
+
+            # Get the user's classifications
             user_classifications = self.getUserClassifications(user_name)
+
+            # Convert the created_at column to datetime objects
             user_times = pd.to_datetime(user_classifications["created_at"])
+
+            # Initialize the previous index
             previous_index = None
+
+            # Iterate over all indices in the user's classifications
             for index in user_times.index:
+                # If there is a previous index, then compute the time difference
                 if(previous_index is not None):
+                    # Compute the time difference between the current and previous classification
                     time_difference = user_times[index] - user_times[previous_index]
+
+                    # Set the upper time limit to 5 minutes
                     upper_time_limit = 60*5
+
+                    # If the time difference is less than the upper time limit, then add it to the list of classification times
                     if(time_difference.seconds < upper_time_limit):
-                        users_classification_times.append(time_difference.seconds)
+                        users_classification_times.append(time_difference.seconds
+                                                          )
+                # Set the previous index to the current index
                 previous_index = index
+
+        # Compute the average time between classifications for all users
         users_average_time = sum(users_classification_times) / len(users_classification_times)
+
+        # Return the average time between classifications for all users
         return users_average_time
 
     def classificationTimeHistogram(self):
@@ -260,19 +311,41 @@ class Analyzer:
         There is an upper time limit of 5 minutes between classifications when computing the histogram.
         """
 
+        # Get the unique usernames
         user_names = self.getUniqueUsers()
+
+        # Initialize the list of classification times
         users_classification_times = []
+
+        # Iterate over all unique usernames
         for user_name in user_names:
+            # Get the user's classifications
             user_classifications = self.getUserClassifications(user_name)
+
+            # Convert the created_at column to datetime objects
             user_times = pd.to_datetime(user_classifications["created_at"])
+
+            # Initialize the previous index
             previous_index = None
+
+            # Iterate over all indices in the user's classifications
             for index in user_times.index:
+                # If there is a previous index, then compute the time difference
                 if(previous_index is not None):
+                    # Compute the time difference between the current and previous classification
                     time_difference = user_times[index] - user_times[previous_index]
+
+                    # Set the upper time limit to 5 minutes
                     upper_time_limit = 60*5
+
+                    # If the time difference is less than the upper time limit, then add it to the list of classification times
                     if(time_difference.seconds < upper_time_limit):
                         users_classification_times.append(time_difference.seconds)
+
+                # Set the previous index to the current index
                 previous_index = index
+
+        # Plot the histogram
         plt.hist(users_classification_times)
         plt.title("Classification Time Histogram")
         plt.xlabel("Time (seconds)")
@@ -298,9 +371,16 @@ class Analyzer:
         This method is useful for visualizing the classifications made for all subjects over some period of time.
         """
 
+        # Get the classification datetimes
         classification_datetimes = pd.to_datetime(self.extracted_dataframe["created_at"])
+
+        # Initialize the binned datetimes dictionary
         binned_datetimes = {}
+
+        # Iterate over all classification datetimes
         for classification_datetime in classification_datetimes:
+
+            # Bin the datetimes
             if(binning_parameter == "Day"):
                 day = classification_datetime.date()
                 if day in binned_datetimes:
@@ -325,7 +405,11 @@ class Analyzer:
                     binned_datetimes[year].append(classification_datetime)
                 else:
                     binned_datetimes[year] = [classification_datetime]
+
+        # Convert the binned datetimes to a dictionary of counts
         binned_datetimes = {k: len(v) for k, v in binned_datetimes.items()}
+
+        # Plot the timeline
         if(bar):
             plt.bar(binned_datetimes.keys(), binned_datetimes.values(), **kwargs)
         else:
@@ -349,7 +433,8 @@ class Analyzer:
         subject : panoptes_client.Subject
             The subject with the given subject ID.
         """
-        
+
+        # Get the subject with the given subject ID in the subject set with the given subject set ID
         return Spout.get_subject(int(subject_id), self.subject_set_id)
 
     def getSubjectMetadata(self, subject_id):
@@ -366,8 +451,11 @@ class Analyzer:
         metadata : dict
             The metadata for the subject with the given subject ID.
         """
-        
+
+        # Get the subject with the given subject ID
         subject = self.getSubject(subject_id)
+
+        # Return the subject's metadata
         return subject.metadata
 
     def getSubjectMetadataField(self, subject_id, field_name):
@@ -386,8 +474,11 @@ class Analyzer:
         field_value : str
             The value of the metadata field with the given field name for the subject with the given subject ID.
         """
-        
+
+        # Get the subject's metadata
         subject_metadata = self.getSubjectMetadata(subject_id)
+
+        # Return the metadata field with the given field name
         return subject_metadata.get(field_name)
 
     def showSubject(self, subject_id, open_in_browser=False):
@@ -407,16 +498,23 @@ class Analyzer:
         subject : panoptes_client.Subject
             The subject with the given subject ID.
         """
-        
+
+        # Get the WiseView link for the subject with the given subject ID
         wise_view_link = self.getSubjectMetadataField(subject_id, "WISEVIEW")
+
+        # Remove the WiseView link prefix and suffix
         wise_view_link = wise_view_link.removeprefix("[WiseView](+tab+")
         wise_view_link = wise_view_link.removesuffix(")")
+
+        # Determine whether or not to open the subject in the default web browser
         if wise_view_link is None:
             print(f"No WiseView link found for subject {subject_id}")
             return None
         else:
             if(open_in_browser):
                 webbrowser.open(wise_view_link)
+
+        # Return the WiseView link
         return wise_view_link
 
     @staticmethod
@@ -434,13 +532,17 @@ class Analyzer:
         bitmask_type : str
             The subject type associated with the bitmask value.
         """
-        
+
+        # Convert the bitmask to an integer
         try:
             bitmask = int(bitmask)
         except ValueError:
             raise ValueError("bitmask must be an integer or a string that can be converted to an integer.")
 
+        # Initialize the bitmask dictionary
         bitmask_dict = {2**0: "SMDET Candidate", 2**1: "Blank", 2**2: "Known Brown Dwarf", 2**3: "Quasar", 2**4: "Random Sky Location", 2**5: "White Dwarf"}
+
+        # Return the bitmask type associated with the bitmask value
         return bitmask_dict.get(bitmask, None)
 
     def determineSuccessCount(self):
@@ -459,22 +561,40 @@ class Analyzer:
         This is only applicable to subjects that have a known correct answer, such as known brown dwarfs, quasars,
         white dwarfs, and random sky locations.
         """
-        
+
+        # Get the subject IDs
         subject_ids = self.getSubjectIDs()
+
+        # Initialize the success count dictionary
         success_count_dict = {}
+
+        # Iterate through the subject IDs
         for subject_id in subject_ids:
+
+            # Get the bitmask for the subject
             try:
                 bitmask = self.getSubjectMetadataField(subject_id, "#BITMASK")
             except AttributeError:
                 continue
+
+            # Convert the bitmask to a subject type
             bitmask_type = self.bitmaskToType(bitmask)
+
+            # If the bitmask type is None, continue
             if bitmask_type is None:
                 continue
+
+            # If the bitmask type is not in the success count dictionary, add it
             if bitmask_type not in success_count_dict:
                 success_count_dict[bitmask_type] = {"total": 0, "success": 0}
+
+            # Increment the total count for the bitmask type
             success_count_dict[bitmask_type]["total"] += 1
+
+            # Get the subject classifications
             subject_classifications = self.subjectClassifications(subject_id)
 
+            # Count the number of successful classifications for each of the bitmask types
             if(bitmask_type == "Known Brown Dwarf"):
                 if(subject_classifications["yes"] > subject_classifications["no"]):
                     success_count_dict[bitmask_type]["success"] += 1
@@ -490,4 +610,5 @@ class Analyzer:
                 if (subject_classifications["no"] > subject_classifications["yes"]):
                     success_count_dict[bitmask_type]["success"] += 1
 
+        # Return the success count dictionary
         return success_count_dict

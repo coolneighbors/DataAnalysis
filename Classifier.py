@@ -31,6 +31,7 @@ class Classifier:
         The config files are used to generate the extracted files, which are used to generate the reduction files.
         """
 
+        # Initialize variables
         self.classifications_csv_filename = classifications_csv_filename
         self.workflow_csv_filename = workflow_csv_filename
         self.config_directory = config_directory
@@ -56,10 +57,12 @@ class Classifier:
                 Optional arguments to be passed to the config command.
         """
 
+        # Generate config files, extracted files, and reduction files
         self.config(workflow_id, **kwargs)
         self.extract()
         self.reduce()
 
+        # Print the results
         print(f"Classifications complete.")
         print(f"Extracted file: {self.extracted_file}")
         print(f"Reduced file: {self.reduced_file}")
@@ -76,6 +79,7 @@ class Classifier:
                 Optional arguments to be passed to the config command.
         """
 
+        # Store the workflow ID
         self.workflow_id = workflow_id
 
         # Define the command you want to run
@@ -84,6 +88,7 @@ class Classifier:
         # Construct the command string with optional arguments
         command_str = command
 
+        # Define the allowed keys for the optional arguments of the config command
         single_dash_keys = ["v", "vv", "k", "h"]
         double_dash_keys = ["version", "help", "min_version", "max_version", "keywords", "verbose"]
         allowed_keys = single_dash_keys + double_dash_keys
@@ -114,13 +119,16 @@ class Classifier:
 
         # Extract the files from the output
         split_output = decoded_output.split("\n")[1:-1]
+
+        # Initialize the files list
         files = []
         for line in split_output:
             possible_file = line.removesuffix("\r")
-            # if possible file exists
+            # If the possible file exists
             if(os.path.exists(possible_file)):
                 files.append(possible_file)
 
+        # Store the config files in the appropriate variables
         for file in files:
             if("Extractor" in file):
                 self.extractor_config_file = file
@@ -139,6 +147,7 @@ class Classifier:
                 Optional arguments to be passed to the extract command.
         """
 
+        # Check that the extractor config file is defined
         if(self.extractor_config_file is None):
             raise ValueError("Extractor file is not defined. Please run config() first.")
 
@@ -148,10 +157,12 @@ class Classifier:
         # Construct the command string with optional arguments
         command_str = command
 
+        # Set the default output file name to be a modified version of the config file name
         if(kwargs.get("o") is None and kwargs.get("output") is None):
             kwargs["o"] = self.extractor_config_file.split("_config_")[1]
             kwargs["output"] = self.extractor_config_file.split("_config_")[1]
 
+        # Define the allowed keys for the optional arguments of the extract command
         single_dash_keys = ["o", "O", "c", "vv", "h"]
         double_dash_keys = ["output", "help", "order", "cpu_count", "verbose"]
         allowed_keys = single_dash_keys + double_dash_keys
@@ -177,7 +188,10 @@ class Classifier:
         # Decode the output assuming it's in UTF-8 encoding
         decoded_output = output.decode("utf-8")
 
+        # Print the output
         print(decoded_output)
+
+        # Save the filename of the extracted file
         if(kwargs.get("o") is not None):
             self.extracted_file = os.path.join(self.extraction_directory, "question_extractor_" + kwargs.get("o").removesuffix(".yaml") + ".csv")
         else:
@@ -193,27 +207,30 @@ class Classifier:
                 Optional arguments to be passed to the reduce command.
         """
 
+        # Check that the reducer config file is defined
         if(self.reducer_config_file is None):
             raise ValueError("Extractor file is not defined. Please run config() first.")
+
+        # Check that the extracted file is defined
         if(self.extracted_file is None):
             raise ValueError("Extracted file is not defined. Please run extract() first.")
 
         # Define the command you want to run
-        command = f"panoptes_aggregation reduce {self.extracted_file} {self.reducer_config_file} -d {self.reductions_directory}"
+        command = f"panoptes_aggregation reduce {self.extracted_file} {self.reducer_config_file} -d {self.reductions_directory} -s"
 
         # Construct the command string with optional arguments
         command_str = command
 
+        # Set the default output file name to be a modified version of the extracted file name
         if(kwargs.get("o") is None and kwargs.get("output") is None):
             head, tail = os.path.split(self.extracted_file)
             extracted_filename = tail.removeprefix("question_extractor_")
             kwargs["o"] = extracted_filename
             kwargs["output"] = extracted_filename
 
-        kwargs["s"] = None
-
-        single_dash_keys = ["o", "O", "F", "c", "s", "h"]
-        double_dash_keys = ["output", "help", "order", "cpu_count", "stream"]
+        # Define the allowed keys for the optional arguments of the reduce command
+        single_dash_keys = ["o", "O", "F", "c", "h"]
+        double_dash_keys = ["output", "help", "order", "cpu_count"]
         allowed_keys = single_dash_keys + double_dash_keys
 
         # Check that the kwargs are valid and add them to the command string
@@ -237,8 +254,10 @@ class Classifier:
         # Decode the output assuming it's in UTF-8 encoding
         decoded_output = output.decode("utf-8")
 
+        # Print the output
         print(decoded_output)
 
+        # Save the filename of the reduced file
         if (kwargs.get("o") is not None):
             self.reduced_file = os.path.join(self.reductions_directory, "question_reducer_" + kwargs.get("o").removesuffix(".csv") + ".csv")
         else:
