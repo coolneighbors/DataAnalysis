@@ -1,10 +1,7 @@
 import csv
-
-from panoptes_client.set_member_subject import SetMemberSubject
-import unWISE_verse
-from unWISE_verse import Data
 import pickle
 
+from unWISE_verse import Data
 from unWISE_verse.Spout import Spout
 
 

@@ -1,8 +1,7 @@
-import argparse
 import os
-
 import panoptes_aggregation
 import subprocess
+
 # https://aggregation-caesar.zooniverse.org/README.html
 
 class Classifier:

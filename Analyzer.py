@@ -5,7 +5,7 @@ import pickle
 import pandas as pd
 import webbrowser
 import matplotlib.pyplot as plt
-from panoptes_client.set_member_subject import SetMemberSubject
+
 from unWISE_verse.Spout import Spout
 
 
