@@ -455,8 +455,15 @@ class Analyzer:
         # Get the subject with the given subject ID
         subject = self.getSubject(subject_id)
 
-        # Return the subject's metadata
-        return subject.metadata
+        try:
+            # Get the subject's metadata
+            subject_metadata = subject.metadata
+
+            # Return the subject's metadata
+            return subject_metadata
+        except AttributeError:
+            # If the subject could not be found, then return None
+            return None
 
     def getSubjectMetadataField(self, subject_id, field_name):
         """
@@ -477,9 +484,15 @@ class Analyzer:
 
         # Get the subject's metadata
         subject_metadata = self.getSubjectMetadata(subject_id)
+        try:
+            # Get the metadata field with the given field name
+            field_value = subject_metadata.get(field_name)
 
-        # Return the metadata field with the given field name
-        return subject_metadata.get(field_name)
+            # Return the metadata field value
+            return field_value
+        except AttributeError:
+            # If the subject could not be found, then return None
+            return None
 
     def showSubject(self, subject_id, open_in_browser=False):
         """
@@ -501,6 +514,10 @@ class Analyzer:
 
         # Get the WiseView link for the subject with the given subject ID
         wise_view_link = self.getSubjectMetadataField(subject_id, "WISEVIEW")
+
+        # Return None if no WiseView link was found
+        if(wise_view_link is None):
+            return None
 
         # Remove the WiseView link prefix and suffix
         wise_view_link = wise_view_link.removeprefix("[WiseView](+tab+")
