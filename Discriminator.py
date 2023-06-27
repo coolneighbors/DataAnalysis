@@ -261,10 +261,6 @@ class SubjectDiscriminator(Discriminator):
                     # Add the subject to the list of valid subjects.
                     valid_subject_list.append(subject)
 
-                    # Display a printout if the user has requested it.
-                    if display_printouts:
-                        print(f"Subject with TARGET ID {subject.metadata['TARGET ID']} is valid.")
-
                 # Display a printout every 1000 subjects.
                 if (display_printouts and index % 1000 == 0 and index != 0):
                     print(f"Checked {index} subjects.")
@@ -275,10 +271,6 @@ class SubjectDiscriminator(Discriminator):
                 if self.isValid(metadata, functional_condition, *field_names):
                     # Add the subject to the list of valid subjects.
                     valid_subject_list.append(self.subject_list[metadata.getFieldValue("index")])
-
-                    # Display a printout if the user has requested it.
-                    if display_printouts:
-                        print(f"Subject with TARGET ID {metadata.getFieldValue('TARGET ID')} is valid.")
 
                 # Display a printout every 1000 subjects.
                 if(display_printouts and index % 1000 == 0 and index != 0):
@@ -586,10 +578,6 @@ class SubjectCSVDiscriminator(CSVDiscriminator):
 
                 # Add the subject to the valid subject list.
                 valid_subject_list.append(subject)
-
-                # Display a printout if requested.
-                if display_printouts:
-                    print(f"Subject with TARGET ID {metadata.getFieldValue('TARGET ID')} is valid.")
 
             # Display a printout every 1000 subjects.
             if(display_printouts and index % 1000 == 0 and index != 0):

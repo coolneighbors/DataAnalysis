@@ -2,14 +2,21 @@ import datetime
 import os
 import pickle
 import warnings
+from copy import copy
 
+import astropy
+import numpy as np
+import pandas
 import pandas as pd
 import webbrowser
 import matplotlib.pyplot as plt
 from astropy.coordinates import SkyCoord
 import astropy.units as u
-
+from astroquery.simbad import Simbad
+import functools
 from unWISE_verse.Spout import Spout
+
+from Checker import SIMBADChecker
 
 
 class Analyzer:
@@ -54,7 +61,7 @@ class Analyzer:
         -----
         This method is called by the __init__ method automatically. If you want to login to a different
         Zooniverse account, delete the login.pickle file. If you want to login to the same account,
-        but with different Zooniverse IDs, delete the zooniverse_ids.pickle file.
+        but with different Zooniverse IDs, delete the zooniverse_ids2.pickle file.
         """
 
         # Get login
@@ -537,30 +544,38 @@ class Analyzer:
         # Return the WiseView link
         return wise_view_link
 
-    def isInSIMBAD(self, subject_id):
+    def getSIMBADLink(self, subject_id):
         """
-        Determines whether or not the subject is in SIMBAD.
+        Gets the SIMBAD link for the subject with the given subject ID.
 
         Parameters
         ----------
         subject_id : str, int
-            The ID of the subject to check.
+            The ID of the subject to get the SIMBAD link for.
 
         Returns
         -------
-        in_simbad : bool
-            Whether or not the subject is in SIMBAD.
+        simbad_link : str
+            The SIMBAD link for the subject with the given subject ID.
         """
 
-        # Get the subject's metadata
         simbad_link = self.getSubjectMetadataField(subject_id, "SIMBAD")
+
+        if (simbad_link is None):
+            return None
+
+            # Remove the SIMBAD link prefix and suffix
+        simbad_link = simbad_link.removeprefix("[SIMBAD](+tab+")
+        simbad_link = simbad_link.removesuffix(")")
+
+        return simbad_link
+
+    def getSIMBADQuery(self, subject_id, *args):
+        # Get the subject's metadata
+        simbad_link = self.getSIMBADLink(subject_id)
 
         if(simbad_link is None):
             return None
-
-        # Remove the SIMBAD link prefix and suffix
-        simbad_link = simbad_link.removeprefix("[SIMBAD](+tab+")
-        simbad_link = simbad_link.removesuffix(")")
 
         def extract_coordinates_from_link(link):
             # Extract the coordinate section from the link
@@ -591,22 +606,124 @@ class Analyzer:
         # Get the radius from the SIMBAD link
         radius = extract_radius_from_link(simbad_link)
 
-        import astroquery.simbad as astro_simbad
+        result = SIMBADChecker.getSIMBADQuery(RA, DEC, radius, *args)
+        return result
 
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            if (DEC > 0):
-                result_table = astro_simbad.Simbad.query_criteria(f"region(CIRCLE, ICRS, {RA} +{DEC}, {radius}s)")
-            else:
-                result_table = astro_simbad.Simbad.query_criteria(f"region(CIRCLE, ICRS, {RA} {DEC}, {radius}s)")
+    def checkSIMBADQuery(self, subject_id, otypes=["BD*", "BD?", "BrownD*", "BrownD?", "BrownD*_Candidate", "PM*"], *args):
+        # Get the subject's metadata
+        simbad_link = self.getSIMBADLink(subject_id)
 
-        if(result_table is None):
+        if(simbad_link is None):
+            return None
+
+        def extract_coordinates_from_link(link):
+            # Extract the coordinate section from the link
+            coord_start = link.find("Coord=") + len("Coord=")
+            coord_end = link.find("&", coord_start)
+            coordinate_section = link[coord_start:coord_end]
+
+            # Split the coordinate section into RA and DEC
+            ra, dec = coordinate_section.split("+")
+
+            return float(ra), float(dec)
+
+        def extract_radius_from_link(link):
+            # Find the index of "Radius=" in the link
+            radius_start = link.find("Radius=") + len("Radius=")
+
+            # Find the index of "&" after the radius value
+            radius_end = link.find("&", radius_start)
+
+            # Extract the radius value
+            radius = link[radius_start:radius_end]
+
+            return float(radius)
+
+        # Get RA and Dec from the SIMBAD link
+        RA, DEC = extract_coordinates_from_link(simbad_link)
+
+        # Get the radius from the SIMBAD link
+        radius = extract_radius_from_link(simbad_link)
+
+
+        conditional_arg = SIMBADChecker.buildConditionalArgument("otypes", "==", otypes)
+        simbad_checker = SIMBADChecker(conditional_arg)
+        simbad_checker.getQuery(RA, DEC, radius, *args)
+        result = simbad_checker.checkQuery()
+        return result
+
+    def isInSIMBAD(self, subject_id):
+        """
+        Determines whether or not the subject is in SIMBAD.
+
+        Parameters
+        ----------
+        subject_id : str, int
+            The ID of the subject to check.
+
+        Returns
+        -------
+        in_simbad : bool
+            Whether or not the subject is in SIMBAD.
+        """
+
+        # Get the subject's metadata
+        simbad_link = self.getSIMBADLink(subject_id)
+
+        if(simbad_link is None):
             return False
-        else:
-            return True
 
-    # TODO: Add additional inDATABASENAME functions to check if the subject is in other databases, then add a function
-    #  which checks if the subject is in any of the databases. If not, it is likely a newly discovered object.
+        def extract_coordinates_from_link(link):
+            # Extract the coordinate section from the link
+            coord_start = link.find("Coord=") + len("Coord=")
+            coord_end = link.find("&", coord_start)
+            coordinate_section = link[coord_start:coord_end]
+
+            # Split the coordinate section into RA and DEC
+            ra, dec = coordinate_section.split("+")
+
+            return float(ra), float(dec)
+
+        def extract_radius_from_link(link):
+            # Find the index of "Radius=" in the link
+            radius_start = link.find("Radius=") + len("Radius=")
+
+            # Find the index of "&" after the radius value
+            radius_end = link.find("&", radius_start)
+
+            # Extract the radius value
+            radius = link[radius_start:radius_end]
+
+            return float(radius)
+
+        # Get RA and Dec from the SIMBAD link
+        RA, DEC = extract_coordinates_from_link(simbad_link)
+
+        # Get the radius from the SIMBAD link
+        radius = extract_radius_from_link(simbad_link)
+
+        return SIMBADChecker.isInSIMBAD(RA, DEC, radius)
+
+    def subjectExists(self, subject_id):
+        """
+        Determines whether or not the subject exists.
+
+        Parameters
+        ----------
+        subject_id : str, int
+            The ID of the subject to check.
+
+        Returns
+        -------
+        subject_exists : bool
+            Whether or not the subject exists.
+        """
+
+        # Get the subject's metadata
+        metadata = self.getSubjectMetadata(subject_id)
+
+        # Return whether or not the subject exists
+        return metadata is not None
 
     @staticmethod
     def bitmaskToType(bitmask):
@@ -703,3 +820,4 @@ class Analyzer:
 
         # Return the success count dictionary
         return success_count_dict
+
