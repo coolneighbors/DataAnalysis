@@ -11,15 +11,23 @@ import numpy as np
 import pandas
 from astropy.coordinates import SkyCoord
 from astropy import units as u
+from astropy.visualization import astropy_mpl_style
+from astropy.visualization.wcsaxes import Quadrangle, SphericalCircle, WCSAxes
 from astroquery.gaia import Gaia
 from astroquery.simbad import Simbad
 from flipbooks.WiseViewQuery import WiseViewQuery
 from matplotlib import pyplot as plt
+from astropy import wcs
+from astropy.io import fits
+from matplotlib.patches import Circle, Rectangle
+from matplotlib.transforms import Bbox
+from regions import CircleSkyRegion, RectangleSkyRegion
 
 boolean_operators = ["&", "|"]
 
 # Abstract class for all checkers
 class Checker(ABC):
+
     @abstractmethod
     def getQuery(self, *args):
         pass
@@ -31,7 +39,7 @@ class Checker(ABC):
     @staticmethod
     def convertCoordinates(coordinates):
         if (isinstance(coordinates, SkyCoord)):
-            coordinates = coordinates.transform_to("ICRS")
+            coordinates = coordinates.transform_to("icrs")
             ra = coordinates.ra.degree
             dec = coordinates.dec.degree
         elif (isinstance(coordinates, list)):
@@ -81,111 +89,179 @@ class Checker(ABC):
             search_type = "Box Search"
         elif (radius is not None):
             search_type = "Cone Search"
+            FOV = radius * math.sqrt(2)
 
         return FOV, radius, search_type
 
     @staticmethod
+    def convertWorldToPixels(ra, dec, wcs):
+        return wcs.world_to_pixel(SkyCoord(ra, dec, unit="deg"))
+
+    @staticmethod
+    def convertPixelsToWorld(x, y, wcs):
+        return wcs.pixel_to_world(x, y)
+
+    @staticmethod
+    def createWCS(ra, dec):
+        # Create a WCS object
+        fits_header = fits.Header()
+        fits_header['CTYPE1'] = 'RA---TAN'
+        fits_header['CTYPE2'] = 'DEC--TAN'
+        fits_header['CDELT1'] = -0.000763888888889
+        fits_header['CDELT2'] = 0.000763888888889
+        fits_header['CRVAL1'] = ra  # Reference RA value in degrees
+        fits_header['CRVAL2'] = dec  # Reference DEC value in degrees
+        fits_header['CRPIX1'] = 0  # Reference pixel in X (RA) direction
+        fits_header['CRPIX2'] = 0  # Reference pixel in Y (DEC) direction
+
+        default_wcs = wcs.WCS(fits_header)
+        return default_wcs
+
+    @staticmethod
+    def getFOVBox(center_coordinates, FOV, wcs, **kwargs):
+
+        # Get an accurate spherical circle that is inscribed in the FOV of the search
+        inscribed_FOV_circle = SphericalCircle(center_coordinates, FOV / 2 * u.arcsec, resolution=300)
+
+        # Get the vertices of the circle
+        inscribed_FOV_circle_vertices = inscribed_FOV_circle.get_verts()
+
+        # Get the bounding box of the circle using its vertices
+        inscribed_FOV_circle_bbox = Bbox.from_extents(inscribed_FOV_circle_vertices[:, 0].min(),
+                                                      inscribed_FOV_circle_vertices[:, 1].min(),
+                                                      inscribed_FOV_circle_vertices[:, 0].max(),
+                                                      inscribed_FOV_circle_vertices[:, 1].max())
+
+        # Create a rectangle patch from the bounding box
+        world_fov_rectangle = Rectangle((inscribed_FOV_circle_bbox.xmin, inscribed_FOV_circle_bbox.ymin), inscribed_FOV_circle_bbox.width, inscribed_FOV_circle_bbox.height, **kwargs)
+
+        bottom_left = Checker.convertWorldToPixels(inscribed_FOV_circle_bbox.xmin, inscribed_FOV_circle_bbox.ymin, wcs)
+        bottom_right = Checker.convertWorldToPixels(inscribed_FOV_circle_bbox.xmax, inscribed_FOV_circle_bbox.ymin, wcs)
+        top_left = Checker.convertWorldToPixels(inscribed_FOV_circle_bbox.xmin, inscribed_FOV_circle_bbox.ymax, wcs)
+
+        # Get width and height of the rectangle
+        width = bottom_right[0] - bottom_left[0]
+        height = top_left[1] - bottom_left[1]
+
+        bottom_left = (float(bottom_left[0]), float(bottom_left[1]))
+
+        pixel_fov_rectangle = Rectangle(bottom_left, width, height, **kwargs)
+
+        return pixel_fov_rectangle, world_fov_rectangle
+
+
+    @staticmethod
+    def getFOVLimits(center_coordinates, FOV, wcs):
+        # Get the bounding box of the FOV
+        pixel_fov_rectangle, world_fov_rectangle = Checker.getFOVBox(center_coordinates, FOV, wcs)
+
+        ra_min, dec_min = world_fov_rectangle.get_xy()
+        ra_max = ra_min + world_fov_rectangle.get_width()
+        dec_max = dec_min + world_fov_rectangle.get_height()
+
+        return ra_min, ra_max, dec_min, dec_max
+
+    @staticmethod
     def plotEntries(center_coordinates, result_dataframe, **kwargs):
-        #TODO: Add a plot title
-        #TODO: Fix angle distances, they are not being calculated correctly.
+        # TODO: Add way to add labels to the sources
+        # TODO: Add way to plot multiple queries on the same plot with different colors
+        if(result_dataframe is None):
+            print("Cannot plot entries. Result dataframe is None.")
+            return None
+
         FOV = kwargs.get('FOV', None)
         radius = kwargs.get('radius', None)
+        add_grid = kwargs.get('grid', False)
 
         ra, dec, FOV, radius, search_type = Checker.convertInput(center_coordinates, FOV, radius)
-        print("RADIUS:", radius)
         deg_radius = radius / 3600
-
-        print(deg_radius)
 
         distance_threshold = kwargs.get('distance_threshold', None)
         distance_threshold = Checker.convertAngle(distance_threshold)
+        #plt.style.use(astropy_mpl_style)
 
         # Plot the Gaia entries in a 2D plot
         fig = plt.figure(figsize=(10, 10))
-        ax = fig.add_subplot(111)
-        ax.ticklabel_format(useOffset=False, style='plain')
 
-        # Force equal aspect ratios for the axes
-        ax.set_aspect('equal')
+        # Create a WCS object
+        default_wcs = Checker.createWCS(ra, dec)
+
+        ax = fig.add_subplot(111, projection=default_wcs)
+
+        def setAxesLimits(ra_min, ra_max, dec_min, dec_max):
+            xlim_skycoord = (SkyCoord(ra_min, dec, unit="deg"), SkyCoord(ra_max, dec, unit="deg"))
+            xlim_pixel = (float(default_wcs.world_to_pixel(xlim_skycoord[0])[0]), float(default_wcs.world_to_pixel(xlim_skycoord[1])[0]))
+            ax.set_xlim(xlim_pixel)
+
+            ylim_skycoord = (SkyCoord(ra, dec_min, unit="deg"), SkyCoord(ra, dec_max, unit="deg"))
+            ylim_pixel = (float(default_wcs.world_to_pixel(ylim_skycoord[0])[1]), float(default_wcs.world_to_pixel(ylim_skycoord[1])[1]))
+            ax.set_ylim(ylim_pixel)
+
+        ra_axis = ax.coords['ra']
+        dec_axis = ax.coords['dec']
+
+        ra_axis.set_major_formatter('dd:mm:ss')
+        #ra_axis.set_ticks(spacing=30 * u.arcsec)
+        dec_axis.set_major_formatter('dd:mm:ss')
+        #dec_axis.set_ticks(spacing=30 * u.arcsec)
+        ax.grid(add_grid)
 
         # Plot the center coordinates
-        plt.plot(ra, dec, 'r+', markersize=10)
+        ax.plot(ra, dec, '+', transform=ax.get_transform('world'), color='green', markersize=10)
+
+        # List of lists of possible column names for the coordinates
+        coordinate_column_names = [['ra', 'dec'], ['RA', 'DEC'], ['RA_d', 'DEC_d']]
 
         # Plot the entries
-        print("Plotting entries...")
-        print(result_dataframe['RA_d'])
+        successful_plot = False
+        for index, coordinate_column_name in enumerate(coordinate_column_names):
+            # If the dataframe contains the RA and DEC columns, plot them
+            if (coordinate_column_name[0] not in result_dataframe.columns or coordinate_column_name[1] not in result_dataframe.columns):
+                continue
 
-        try:
-            plt.scatter(result_dataframe['ra'].values, result_dataframe['dec'].values, s=3, c='k')
-        except KeyError:
-            try:
-                try:
-                    float(result_dataframe['RA'].values[0])
-                    float(result_dataframe['DEC'].values[0])
+            # Check if the datafrane is empty
+            if (len(result_dataframe) == 0 or result_dataframe.empty):
+                successful_plot = True
+                break
 
-                    plt.scatter(result_dataframe['RA'].values, result_dataframe['DEC'].values, s=3, c='k')
-                except ValueError:
-                    # Find the angular distance between the center coordinates and the entries
-                    ra_values = result_dataframe['RA_d'].values
-                    dec_values = result_dataframe['DEC_d'].values
+            ax.scatter(result_dataframe[coordinate_column_name[0]], result_dataframe[coordinate_column_name[1]], transform=ax.get_transform('world'), s=3, c='k')
+            successful_plot = True
 
-                    # Convert the coordinates to SkyCoords
-                    center_coordinates = SkyCoord(ra, dec, unit=(u.degree, u.degree))
-                    entry_coordinates = SkyCoord(ra+(1/3600), dec, unit=(u.degree, u.degree))
+        if(not successful_plot):
+            raise KeyError("Could not find RA and DEC columns in the result dataframe.")
 
-                    # Calculate the angular distance between the center coordinates and the entries
-                    angular_distance = center_coordinates.separation(entry_coordinates).arcsec
-                    print("Angular distance:", angular_distance)
-
-                    plt.scatter(result_dataframe['RA_d'].values, result_dataframe['DEC_d'].values, s=100, c='k')
-                    print("PRinted")
-            except KeyError:
-                raise(KeyError("Could not find RA and DEC columns in the result dataframe."))
-
-        # legend = plt.legend(loc='upper right', fontsize=12)
         handles = []
         labels = []
 
         # Draw the dashed box around the field of view
         if (search_type == "Box Search"):
-            deg_FOV = FOV / 3600
 
-            # Set the coordinates for the field of view box
-            fov_x_start = ra - deg_FOV / 2
-            fov_x_end = ra + deg_FOV / 2
-            fov_y_start = dec - deg_FOV / 2
-            fov_y_end = dec + deg_FOV / 2
+            pixel_fov_rectangle, world_fov_rectangle = Checker.getFOVBox(SkyCoord(ra, dec, unit=(u.deg, u.deg)), FOV, default_wcs, edgecolor='blue', facecolor='none', linestyle='dashed')
+            ax.add_patch(pixel_fov_rectangle)
 
-            fov_rect = plt.Rectangle((fov_x_start, fov_y_start), fov_x_end - fov_x_start, fov_y_end - fov_y_start, edgecolor='blue', facecolor='none', linestyle='dashed')
-            ax.add_patch(fov_rect)
+            # Set the limits of the axes
 
-            plt.xlim(fov_x_start, fov_x_end)
-            plt.ylim(fov_y_start, fov_y_end)
+            setAxesLimits(*Checker.getFOVLimits(SkyCoord(ra, dec, unit=(u.deg, u.deg)), FOV, default_wcs))
 
             # Add to existing legend
-            handles.append(fov_rect)
+            handles.append(pixel_fov_rectangle)
+
             labels.append("Field of View")
 
         # Draw a dashed circle around the field of view
         if (search_type == "Cone Search"):
-            from regions import CircleSkyRegion
+            setAxesLimits(*Checker.getFOVLimits(SkyCoord(ra, dec, unit=(u.deg, u.deg)), 2*radius, default_wcs))
 
-            search_circle = CircleSkyRegion(center=SkyCoord(ra, dec, unit=(u.degree, u.degree)), radius=deg_radius * u.degree)
-            #search_circle = plt.Circle((ra, dec), deg_radius, edgecolor='green', facecolor='none', linestyle='dashed')
-            ax.add_patch(search_circle.as_patch())
-
-            # Set the axis limits
-            plt.xlim(ra - deg_radius, ra + deg_radius)
-            plt.ylim(dec - deg_radius, dec + deg_radius)
+            # Make a spherical circle
+            search_circle = SphericalCircle((ra, dec) * u.deg, deg_radius * u.deg, transform=ax.get_transform('world'), edgecolor='blue', facecolor='none', linestyle='dashed')
+            ax.add_patch(search_circle)
 
             handles.append(search_circle)
             labels.append("Search Radius")
 
         if (distance_threshold is not None):
             deg_distance_threshold = distance_threshold / 3600
-            print("Distance Threshold:", deg_distance_threshold)
-            distance_threshold_circle = plt.Circle((ra, dec), deg_distance_threshold, edgecolor='red', facecolor='none',
-                                                   linestyle='dashed')
+            distance_threshold_circle = SphericalCircle((ra, dec) * u.deg, deg_distance_threshold * u.deg, transform=ax.get_transform('world'), edgecolor='red', facecolor='none', linestyle='dashed')
             ax.add_patch(distance_threshold_circle)
 
             # Add to existing legend
@@ -193,13 +269,14 @@ class Checker(ABC):
             labels.append("Distance Threshold")
 
         # Add the legend
-        plt.legend(handles=handles, labels=labels, loc='upper right', fontsize=10)
+        ax.legend(handles=handles, labels=labels, loc='upper right', fontsize=10)
 
         # Set the axis labels
-        plt.xlabel("RA (deg)")
-        plt.ylabel("Dec (deg)")
+        plt.xlabel("RA")
+        plt.ylabel("Dec")
+        plt.title(f"Valid Query Results: {len(result_dataframe)}")
 
-        # Invert the x-axis
+        # Reverse x-axis
         ax.invert_xaxis()
 
         # Show the plot
@@ -247,15 +324,18 @@ class SIMBADChecker(Checker):
         self.conditional_args = conditional_args
 
     @staticmethod
-    def isInSIMBAD(ra, dec, radius, *args):
-        result_table = SIMBADChecker.getSIMBADQuery(ra, dec, radius, *args)
-        return result_table is not None
+    def isInSIMBAD(coordinates, FOV=None, radius=None, *args):
+        result_table = SIMBADChecker.getSIMBADQuery(coordinates, FOV, radius, *args)
+        if(result_table is None):
+            return False
+        elif(len(result_table) == 0):
+            return False
+        else:
+            return True
 
     @staticmethod
-    def getSIMBADQuery(ra, dec, FOV=None, radius=None, *args):
-
-        ra = float(ra)
-        dec = float(dec)
+    def getSIMBADQuery(coordinates, FOV=None, radius=None, *args):
+        ra, dec, FOV, radius, search_type = SIMBADChecker.convertInput(coordinates, FOV, radius)
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
@@ -273,15 +353,17 @@ class SIMBADChecker(Checker):
             target_coords = SkyCoord(ra=ra, dec=dec, unit=(u.deg, u.deg), frame='icrs')
 
             # Construct the region query
-            result_table = simbad_query.query_region(target_coords, radius=radius * u.arcsec)
-
-            # Apply FOV filter on search results
-            if (FOV is not None and result_table is not None):
-                deg_FOV = FOV / 3600
-                result_table = result_table[result_table['RA_d'] >= ra - deg_FOV / 2]
-                result_table = result_table[result_table['RA_d'] <= ra + deg_FOV / 2]
-                result_table = result_table[result_table['DEC_d'] >= dec - deg_FOV / 2]
-                result_table = result_table[result_table['DEC_d'] <= dec + deg_FOV / 2]
+            if(search_type == "Box Search"):
+                if(dec < 0):
+                    dec = abs(dec)
+                    box_search_string = f"region(box, {ra} -{dec}, {FOV}s {FOV}s)"
+                else:
+                    box_search_string = f"region(box, {ra} +{dec}, {FOV}s {FOV}s)"
+                print("BOX SEARCH STRING: ", box_search_string)
+                result_table = simbad_query.query_criteria(box_search_string)
+                print("RESULT TABLE: ", result_table)
+            elif(search_type == "Cone Search"):
+                result_table = simbad_query.query_region(target_coords, radius=radius * u.arcsec)
 
             return result_table
 
@@ -317,11 +399,9 @@ class SIMBADChecker(Checker):
         FOV = kwargs.get("FOV", None)
         radius = kwargs.get("radius", None)
 
-        ra, dec, FOV, radius, self.search_type = self.convertInput(coordinates, FOV, radius)
-
         criteria_args = self.getCriteriaArgs(self.conditional_args)
 
-        self.full_result_table = self.getSIMBADQuery(ra, dec, FOV, radius, *criteria_args)
+        self.full_result_table = self.getSIMBADQuery(coordinates, FOV, radius, *criteria_args)
         if(self.full_result_table is not None):
             self.full_result_dataframe = self.full_result_table.to_pandas()
         else:
@@ -531,33 +611,58 @@ class GaiaChecker(Checker):
 
     def __init__(self, distance_threshold=0.0025):
         self.distance_threshold = distance_threshold
-        Gaia.ROW_LIMIT = 100  # Ensure the default row limit.
+        Gaia.ROW_LIMIT = 200  # Ensure the default row limit.
         Gaia.MAIN_GAIA_TABLE = "gaiadr3.gaia_source"
 
     @staticmethod
-    def isInGaia(ra, dec, radius):
-        r = GaiaChecker.getGaiaQuery(ra, dec, radius)
+    def isInGaia(coordinates, FOV=None, radius=None):
+        r = GaiaChecker.getGaiaQuery(coordinates, FOV, radius)
         return len(r) > 0
 
     @staticmethod
-    def getGaiaQuery(ra, dec, FOV=None, radius=None):
-        ra = float(ra)
-        dec = float(dec)
+    def getGaiaQuery(coordinates, FOV=None, radius=None):
 
-        coord = SkyCoord(ra=ra, dec=dec, unit=(u.degree, u.degree), frame='icrs')
-        j = Gaia.cone_search_async(coord, radius=u.Quantity(radius, u.arcsec))
-        r = j.get_results()
+        ra, dec, FOV, radius, search_type = GaiaChecker.convertInput(coordinates, FOV, radius)
 
-        # Apply FOV filter on search results
-        if(FOV is not None and r is not None):
-            deg_FOV = FOV/3600
-            r = r[r['ra'] >= ra - deg_FOV/2]
-            r = r[r['ra'] <= ra + deg_FOV/2]
-            r = r[r['dec'] >= dec - deg_FOV/2]
-            r = r[r['dec'] <= dec + deg_FOV/2]
+        # Create a WCS object
+        fits_header = fits.Header()
+        fits_header['CTYPE1'] = 'RA---TAN'
+        fits_header['CTYPE2'] = 'DEC--TAN'
+        fits_header['CDELT1'] = -0.000763888888889
+        fits_header['CDELT2'] = 0.000763888888889
+        fits_header['CRVAL1'] = ra  # Reference RA value in degrees
+        fits_header['CRVAL2'] = dec  # Reference DEC value in degrees
+        fits_header['CRPIX1'] = 0  # Reference pixel in X (RA) direction
+        fits_header['CRPIX2'] = 0  # Reference pixel in Y (DEC) direction
+
+        my_wcs = wcs.WCS(fits_header)
+
+        if(search_type == "Box Search"):
+            center_coords = SkyCoord(ra=ra, dec=dec, unit=(u.deg, u.deg), frame='icrs')
+            ra_min, ra_max, dec_min, dec_max = Checker.getFOVLimits(center_coords, FOV, my_wcs)
+            j = Gaia.launch_job_async(f"SELECT designation, ra, dec, parallax, pmra, pmdec, DISTANCE({ra}, {dec}, ra, dec) AS dist " + "FROM gaiadr3.gaia_source " + f"WHERE ra BETWEEN {ra_min} AND {ra_max} AND dec BETWEEN {dec_min} AND {dec_max} " + "ORDER BY dist ASC")
+            r = j.get_results()
+        elif(search_type == "Cone Search"):
+            coords = SkyCoord(ra=ra, dec=dec, unit=(u.deg, u.deg), frame='icrs')
+            j = Gaia.cone_search_async(coords, radius=u.Quantity(radius, u.arcsec))
+            r = j.get_results()
 
         return r
+    """
+        ra, dec, FOV, radius, search_type = GaiaChecker.convertInput(coordinates, FOV, radius)
+        coords = SkyCoord(ra=ra, dec=dec, unit=(u.deg, u.deg), frame='icrs')
+        print("FOV: {}".format(FOV))
+        if(search_type == "Box Search"):
+            r = Gaia.query_object_async(coordinate=coords, width=FOV * u.arcsec, height=FOV * u.arcsec)
+            print(r)
+        elif(search_type == "Cone Search"):
+            j = Gaia.cone_search_async(coords, radius=u.Quantity(radius, u.arcsec))
+            r = j.get_results()
+        else:
+            raise ValueError("search_type must be either 'Box Search' or 'Cone Search'")
 
+        return r
+    """
     @staticmethod
     def showGaiaEntries(result_dataframe, FOV=120, open_link=False):
         for index, source in result_dataframe.iterrows():
@@ -574,9 +679,8 @@ class GaiaChecker(Checker):
         FOV = kwargs.get('FOV', None)
         radius = kwargs.get('radius', None)
         
-        ra, dec, FOV, radius, self.search_type = self.convertInput(coordinates, FOV, radius)
-        
-        self.full_result_table = GaiaChecker.getGaiaQuery(ra, dec, FOV, radius)
+        self.full_result_table = GaiaChecker.getGaiaQuery(coordinates, FOV, radius)
+
         if(self.full_result_table is not None):
             self.full_result_dataframe = self.full_result_table.to_pandas()
         else:

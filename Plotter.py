@@ -343,4 +343,3 @@ class SubjectCSVPlotter(Plotter):
 
         # Return the RA and DEC lists.
         return ra_list, dec_list
-

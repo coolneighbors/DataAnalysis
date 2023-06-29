@@ -1,4 +1,5 @@
 import datetime
+import math
 import os
 import pickle
 import warnings
@@ -16,11 +17,13 @@ from astroquery.simbad import Simbad
 import functools
 from unWISE_verse.Spout import Spout
 
-from Checker import SIMBADChecker
+import Checker
+from Checker import SIMBADChecker, GaiaChecker
+from Plotter import SubjectCSVPlotter
 
 
 class Analyzer:
-    def __init__(self, extracted_file, reduced_file, save_login=True):
+    def __init__(self, extracted_file, reduced_file, subjects_file=None, save_login=True):
         """
         Initializes an Analyzer object, which is used to analyze the extracted and reduced classifications from a
         Zooniverse project.
@@ -45,8 +48,15 @@ class Analyzer:
         self.reduced_file = reduced_file
         self.extracted_dataframe = pd.read_csv(self.extracted_file)
         self.reduced_dataframe = pd.read_csv(self.reduced_file)
-        self.subject_set_id = None
-        self.login(save_login)
+
+        if (subjects_file is not None):
+            self.subjects_file = subjects_file
+            self.subjects_dataframe = pd.read_csv(self.subjects_file)
+        else:
+            self.subjects_file = None
+            self.subjects_dataframe = None
+            self.subject_set_id = None
+            self.login(save_login)
 
     def login(self, save=True):
         """
@@ -61,7 +71,7 @@ class Analyzer:
         -----
         This method is called by the __init__ method automatically. If you want to login to a different
         Zooniverse account, delete the login.pickle file. If you want to login to the same account,
-        but with different Zooniverse IDs, delete the zooniverse_ids2.pickle file.
+        but with different Zooniverse IDs, delete the zooniverse_ids.pickle file.
         """
 
         # Get login
@@ -73,7 +83,7 @@ class Analyzer:
         # Create Spout object to access the Zooniverse project
         Spout(project_identifier=project_id, login=login, display_printouts=True)
 
-    def getUniqueUsers(self):
+    def getUniqueUsers(self, include_logged_out=True):
         """
         Provides a list of the usernames of all unique users who participated in classifications.
 
@@ -81,9 +91,13 @@ class Analyzer:
         -------
         unique_users : list, strings
         """
-        
-        # Return the list of unique users
-        return self.extracted_dataframe["user_name"].unique()
+
+        if(include_logged_out):
+            return self.extracted_dataframe["user_name"].unique()
+        else:
+            unique_users = self.extracted_dataframe["user_name"].unique()
+            logged_in_unique_users = [user for user in unique_users if "not-logged-in" not in user]
+            return logged_in_unique_users
 
     def getClassificationsCount(self):
         """
@@ -140,6 +154,68 @@ class Analyzer:
         # Return the number of classifications made by that user
         return len(self.getUserClassifications(user_id))
 
+    def getTopUsers(self, count_threshold=None, percentile=None):
+
+        if (count_threshold is None and percentile is None):
+            raise ValueError("You must provide either a count_threshold or a percentile.")
+        elif(count_threshold is not None and percentile is not None):
+            raise ValueError("You cannot provide both a count_threshold and a percentile.")
+
+        unique_users = self.getUniqueUsers()
+        user_classifications_dict = {}
+
+        for unique_user in unique_users:
+            user_classifications_dict[unique_user] = self.getUserClassificationsCount(unique_user)
+
+        # Sort the dictionary by the number of classifications
+        sorted_user_classifications_dict = {k: v for k, v in sorted(user_classifications_dict.items(), key=lambda item: item[1])}
+
+        # Reverse the dictionary
+        sorted_user_classifications_dict = dict(reversed(list(sorted_user_classifications_dict.items())))
+
+        top_users_dict = {}
+
+        def userMeetsRequirements(user, count_threshold, percentile):
+            if(percentile is not None):
+                if(sorted_user_classifications_dict[user] >= np.percentile(list(sorted_user_classifications_dict.values()), percentile)):
+                    return True
+                else:
+                    return False
+            else:
+                if(sorted_user_classifications_dict[user] >= count_threshold):
+                    return True
+                else:
+                    return False
+
+        for user in sorted_user_classifications_dict:
+            if(userMeetsRequirements(user, count_threshold, percentile)):
+                top_users_dict[user] = sorted_user_classifications_dict[user]
+        return top_users_dict
+
+    def getTopUsersCount(self, count_threshold=None, percentile=None):
+        top_users_dict = self.getTopUsers(count_threshold=count_threshold, percentile=percentile)
+        return len(top_users_dict)
+
+    def getTopUsersClassificationsCount(self, count_threshold=None, percentile=None):
+        top_users_dict = self.getTopUsers(count_threshold=count_threshold, percentile=percentile)
+        return sum(top_users_dict.values())
+
+    def plotTopUsersClassificationCounts(self, count_threshold=None, percentile=None):
+        top_users_dict = self.getTopUsers(count_threshold=count_threshold, percentile=percentile)
+        plt.bar(top_users_dict.keys(), top_users_dict.values())
+
+        for key, value in top_users_dict.items():
+            # Place the number of classifications above the bar
+            plt.text(key, value + 10, str(value), horizontalalignment='center', verticalalignment='bottom', fontsize=10)
+
+        plt.xlabel("Username", fontsize=15)
+        plt.ylabel("Number of Classifications", fontsize=15)
+        if(percentile is not None):
+            plt.title(f"Users in the top {100 - percentile}% of classifications")
+        elif(count_threshold is not None):
+            plt.title(f"Users with more than {count_threshold} classifications")
+        plt.show()
+
     def getSubjectIDs(self):
         """
         Provides a list of all subject IDs in the reduced classifications file.
@@ -158,7 +234,7 @@ class Analyzer:
         # Return the list of subject IDs
         return self.reduced_dataframe["subject_id"].values
 
-    def getSubjectDataframe(self, subject_id, reduced=True):
+    def getSubjectDataframe(self, subject_id, type="default"):
         """
         Provides the reduced dataframe of the classifications made for a particular subject.
 
@@ -166,8 +242,9 @@ class Analyzer:
         ----------
         subject_id : str or int
             The subject's Zooniverse ID.
-        reduced : bool
-            Whether or not to return the reduced dataframe (or the extracted dataframe). Default is True.
+        type : str, optional
+            The type of dataframe to return. Can be either "reduced", "extracted", or default.
+            Default is taken from the subject's metadata.
 
         Returns
         -------
@@ -175,16 +252,28 @@ class Analyzer:
             The reduced (or extracted) dataframe of the classifications made for that subject.
 
         """
-        
-        # Check if the the subject row should be taken from the reduced or the extracted dataframe
-        if(reduced):
+        if(type == "default"):
+            # If default, then return the metadata of the subject as a dataframe
+            subject_metadata = self.getSubjectMetadata(subject_id)
+
+            # Add the standard subject_id column
+            subject_metadata["subject_id"] = subject_id
+
+            # Add the standard metadata column
+            subject_metadata["metadata"] = str(subject_metadata)
+
+            # Convert the metadata to a dataframe
+            subject_metadata_dataframe = pd.DataFrame.from_dict(subject_metadata, orient="index").transpose()
+            return subject_metadata_dataframe
+
+        elif(type == "reduced"):
             # If reduced, then return the reduced dataframe for that subject
             return self.reduced_dataframe[self.reduced_dataframe["subject_id"] == int(subject_id)]
-        else:
+        elif(type == "extracted"):
             # If not reduced, then return the extracted dataframe for that subject
             return self.extracted_dataframe[self.extracted_dataframe["subject_id"] == int(subject_id)]
 
-    def subjectClassifications(self, subject_id):
+    def getSubjectClassifications(self, subject_id):
         """
         Provides a dictionary of the number of "yes" and "no" classifications for a particular subject.
 
@@ -200,7 +289,7 @@ class Analyzer:
         """
 
         # Get the subject's dataframe
-        subject_dataframe = self.getSubjectDataframe(subject_id)
+        subject_dataframe = self.getSubjectDataframe(subject_id, type="reduced")
 
         try:
             # Try to get the number of "yes" classifications
@@ -219,6 +308,41 @@ class Analyzer:
         # Return the dictionary of the number of "yes" and "no" classifications
         return {"yes": yes_count, "no": no_count}
 
+    def getClassificationCountDict(self, total_subject_count=None):
+        subject_ids = self.getSubjectIDs()
+        number_of_classifications_dict = {}
+        for subject_id in subject_ids:
+            classification_dict = self.getSubjectClassifications(subject_id)
+            total_classifications = classification_dict['yes'] + classification_dict['no']
+            if (total_classifications in number_of_classifications_dict):
+                number_of_classifications_dict[total_classifications] += 1
+            else:
+                number_of_classifications_dict[total_classifications] = 1
+
+        if(total_subject_count is not None):
+            number_of_classifications_dict[0] = total_subject_count - len(subject_ids)
+        number_of_classifications_dict = dict(sorted(number_of_classifications_dict.items()))
+        return number_of_classifications_dict
+
+    def getSubsetClassificationCount(self, minimum_count=0, total_subject_count=None):
+        classification_count_dict = self.getClassificationCountDict(total_subject_count)
+        return sum(value for key, value in classification_count_dict.items() if key >= minimum_count)
+
+    def plotClassificationCounts(self, total_subject_count=None):
+        number_of_classifications_dict = self.getClassificationCountDict(total_subject_count)
+
+        plt.bar(number_of_classifications_dict.keys(), number_of_classifications_dict.values())
+
+        for key in number_of_classifications_dict:
+            plt.text(key, number_of_classifications_dict[key], number_of_classifications_dict[key], ha='center', va='bottom')
+
+        plt.xlabel("Number of Classifications")
+        plt.ylabel("Number of Subjects")
+        plt.title("Classification Count Distribution")
+
+        plt.xticks(range(len(number_of_classifications_dict)))
+        plt.show()
+
     def plotSubjectClassifications(self, subject_id):
         """
         Plots a pie chart of the number of "yes" and "no" classifications for a particular subject.
@@ -235,7 +359,7 @@ class Analyzer:
         """
 
         # Get the number of "yes" and "no" classifications for that subject as a dictionary
-        classification_dict = self.subjectClassifications(subject_id)
+        classification_dict = self.getSubjectClassifications(subject_id)
 
         # Get the number of "yes" and "no" classifications from the dictionary
         yes_count = classification_dict["yes"]
@@ -463,17 +587,24 @@ class Analyzer:
         """
 
         # Get the subject with the given subject ID
-        subject = self.getSubject(subject_id)
+        if(self.subjects_file is not None):
+            subject_dataframe = self.subjects_dataframe[self.subjects_dataframe["subject_id"] == subject_id]
+            if(subject_dataframe.empty):
+                return None
+            else:
+                return eval(self.subjects_dataframe[self.subjects_dataframe["subject_id"] == subject_id].iloc[0]["metadata"])
+        else:
+            subject = self.getSubject(subject_id)
 
-        try:
-            # Get the subject's metadata
-            subject_metadata = subject.metadata
+            try:
+                # Get the subject's metadata
+                subject_metadata = subject.metadata
 
-            # Return the subject's metadata
-            return subject_metadata
-        except AttributeError:
-            # If the subject could not be found, then return None
-            return None
+                # Return the subject's metadata
+                return subject_metadata
+            except AttributeError:
+                # If the subject could not be found, then return None
+                return None
 
     def getSubjectMetadataField(self, subject_id, field_name):
         """
@@ -494,15 +625,15 @@ class Analyzer:
 
         # Get the subject's metadata
         subject_metadata = self.getSubjectMetadata(subject_id)
-        try:
-            # Get the metadata field with the given field name
-            field_value = subject_metadata.get(field_name)
 
-            # Return the metadata field value
-            return field_value
-        except AttributeError:
-            # If the subject could not be found, then return None
+        if(subject_metadata is None):
             return None
+
+        # Get the metadata field with the given field name
+        field_value = subject_metadata.get(field_name)
+
+        # Return the metadata field value
+        return field_value
 
     def showSubject(self, subject_id, open_in_browser=False):
         """
@@ -527,6 +658,7 @@ class Analyzer:
 
         # Return None if no WiseView link was found
         if(wise_view_link is None):
+            print(f"No WiseView link found for subject {subject_id}, so it cannot be shown.")
             return None
 
         # Remove the WiseView link prefix and suffix
@@ -543,6 +675,31 @@ class Analyzer:
 
         # Return the WiseView link
         return wise_view_link
+
+    @staticmethod
+    def extract_coordinates_from_link(link):
+        # Extract the coordinate section from the link
+        coord_start = link.find("Coord=") + len("Coord=")
+        coord_end = link.find("&", coord_start)
+        coordinate_section = link[coord_start:coord_end]
+
+        # Split the coordinate section into RA and DEC
+        ra, dec = coordinate_section.split("+")
+
+        return float(ra), float(dec)
+
+    @staticmethod
+    def extract_radius_from_link(link):
+        # Find the index of "Radius=" in the link
+        radius_start = link.find("Radius=") + len("Radius=")
+
+        # Find the index of "&" after the radius value
+        radius_end = link.find("&", radius_start)
+
+        # Extract the radius value
+        radius = link[radius_start:radius_end]
+
+        return float(radius)
 
     def getSIMBADLink(self, subject_id):
         """
@@ -562,6 +719,7 @@ class Analyzer:
         simbad_link = self.getSubjectMetadataField(subject_id, "SIMBAD")
 
         if (simbad_link is None):
+            print(f"No SIMBAD link found for subject {subject_id}, so it cannot be provided.")
             return None
 
             # Remove the SIMBAD link prefix and suffix
@@ -570,86 +728,56 @@ class Analyzer:
 
         return simbad_link
 
-    def getSIMBADQuery(self, subject_id, *args):
+    def getSIMBADQuery(self, subject_id, plot=False, *args):
         # Get the subject's metadata
         simbad_link = self.getSIMBADLink(subject_id)
 
         if(simbad_link is None):
+            print(f"No SIMBAD link found for subject {subject_id}, so it cannot be queried.")
             return None
 
-        def extract_coordinates_from_link(link):
-            # Extract the coordinate section from the link
-            coord_start = link.find("Coord=") + len("Coord=")
-            coord_end = link.find("&", coord_start)
-            coordinate_section = link[coord_start:coord_end]
-
-            # Split the coordinate section into RA and DEC
-            ra, dec = coordinate_section.split("+")
-
-            return float(ra), float(dec)
-
-        def extract_radius_from_link(link):
-            # Find the index of "Radius=" in the link
-            radius_start = link.find("Radius=") + len("Radius=")
-
-            # Find the index of "&" after the radius value
-            radius_end = link.find("&", radius_start)
-
-            # Extract the radius value
-            radius = link[radius_start:radius_end]
-
-            return float(radius)
-
         # Get RA and Dec from the SIMBAD link
-        RA, DEC = extract_coordinates_from_link(simbad_link)
+        RA, DEC = self.extract_coordinates_from_link(simbad_link)
+        coords = [RA, DEC]
 
         # Get the radius from the SIMBAD link
-        radius = extract_radius_from_link(simbad_link)
+        radius = self.extract_radius_from_link(simbad_link)
 
-        result = SIMBADChecker.getSIMBADQuery(RA, DEC, radius, *args)
+        FOV = math.sqrt(2) * radius
+        SBC = SIMBADChecker()
+
+        result = SBC.getSIMBADQuery(coords, *args, FOV=FOV)
+
+        if(plot):
+            SBC.plotEntries(coords, result, FOV=FOV)
+
         return result
 
-    def checkSIMBADQuery(self, subject_id, otypes=["BD*", "BD?", "BrownD*", "BrownD?", "BrownD*_Candidate", "PM*"], *args):
+    def checkSIMBADQuery(self, subject_id, plot=False, otypes=["BD*", "BD?", "BrownD*", "BrownD?", "BrownD*_Candidate", "PM*"], *args):
         # Get the subject's metadata
         simbad_link = self.getSIMBADLink(subject_id)
 
         if(simbad_link is None):
+            print(f"No SIMBAD link found for subject {subject_id}, so its query cannot be checked.")
             return None
 
-        def extract_coordinates_from_link(link):
-            # Extract the coordinate section from the link
-            coord_start = link.find("Coord=") + len("Coord=")
-            coord_end = link.find("&", coord_start)
-            coordinate_section = link[coord_start:coord_end]
-
-            # Split the coordinate section into RA and DEC
-            ra, dec = coordinate_section.split("+")
-
-            return float(ra), float(dec)
-
-        def extract_radius_from_link(link):
-            # Find the index of "Radius=" in the link
-            radius_start = link.find("Radius=") + len("Radius=")
-
-            # Find the index of "&" after the radius value
-            radius_end = link.find("&", radius_start)
-
-            # Extract the radius value
-            radius = link[radius_start:radius_end]
-
-            return float(radius)
-
         # Get RA and Dec from the SIMBAD link
-        RA, DEC = extract_coordinates_from_link(simbad_link)
+        RA, DEC = self.extract_coordinates_from_link(simbad_link)
+        coords = [RA, DEC]
 
         # Get the radius from the SIMBAD link
-        radius = extract_radius_from_link(simbad_link)
+        radius = self.extract_radius_from_link(simbad_link)
 
+        FOV = math.sqrt(2) * radius
 
         conditional_arg = SIMBADChecker.buildConditionalArgument("otypes", "==", otypes)
         simbad_checker = SIMBADChecker(conditional_arg)
-        simbad_checker.getQuery(RA, DEC, radius, *args)
+        simbad_checker.getQuery(coords, *args, FOV=FOV)
         result = simbad_checker.checkQuery()
+
+        if(plot):
+            simbad_checker.plotEntries(coords, result, FOV=FOV)
+
         return result
 
     def isInSIMBAD(self, subject_id):
@@ -671,38 +799,85 @@ class Analyzer:
         simbad_link = self.getSIMBADLink(subject_id)
 
         if(simbad_link is None):
+            print(f"No SIMBAD link found for subject {subject_id}, so it cannot be checked.")
             return False
 
-        def extract_coordinates_from_link(link):
-            # Extract the coordinate section from the link
-            coord_start = link.find("Coord=") + len("Coord=")
-            coord_end = link.find("&", coord_start)
-            coordinate_section = link[coord_start:coord_end]
-
-            # Split the coordinate section into RA and DEC
-            ra, dec = coordinate_section.split("+")
-
-            return float(ra), float(dec)
-
-        def extract_radius_from_link(link):
-            # Find the index of "Radius=" in the link
-            radius_start = link.find("Radius=") + len("Radius=")
-
-            # Find the index of "&" after the radius value
-            radius_end = link.find("&", radius_start)
-
-            # Extract the radius value
-            radius = link[radius_start:radius_end]
-
-            return float(radius)
-
         # Get RA and Dec from the SIMBAD link
-        RA, DEC = extract_coordinates_from_link(simbad_link)
+        RA, DEC = self.extract_coordinates_from_link(simbad_link)
 
         # Get the radius from the SIMBAD link
-        radius = extract_radius_from_link(simbad_link)
+        radius = self.extract_radius_from_link(simbad_link)
 
-        return SIMBADChecker.isInSIMBAD(RA, DEC, radius)
+        FOV = math.sqrt(2) * radius
+
+        return SIMBADChecker.isInSIMBAD(RA, DEC, FOV=FOV)
+
+    def getGaiaQuery(self, subject_id, plot=False):
+        # Get the subject's metadata
+        subject_metadata = self.getSubjectMetadata(subject_id)
+        RA = subject_metadata["RA"]
+        DEC = subject_metadata["DEC"]
+        coords = [RA, DEC]
+
+        simbad_link = self.getSIMBADLink(subject_id)
+        radius = self.extract_radius_from_link(simbad_link)
+
+        FOV = math.sqrt(2) * radius
+
+        GC = GaiaChecker(distance_threshold=np.inf)
+        result = GC.getQuery(coords, FOV=FOV)
+
+        if(plot):
+            GC.plotEntries(coords, result, FOV=FOV)
+        return result
+
+    def checkGaiaQuery(self, subject_id, distance_threshold, plot=False):
+        # Get the subject's metadata
+        subject_metadata = self.getSubjectMetadata(subject_id)
+        RA = subject_metadata["RA"]
+        DEC = subject_metadata["DEC"]
+        coords = [RA, DEC]
+
+        simbad_link = self.getSIMBADLink(subject_id)
+        radius = self.extract_radius_from_link(simbad_link)
+
+        FOV = math.sqrt(2) * radius
+        GC = GaiaChecker(distance_threshold)
+        GC.getQuery(coords, FOV=FOV)
+        result = GC.checkQuery()
+
+        if(plot):
+            GC.plotEntries(coords, result, FOV=FOV, distance_threshold=distance_threshold)
+
+        return result
+
+    def isInGaia(self, subject_id):
+        """
+        Determines whether or not the subject is in Gaia.
+
+        Parameters
+        ----------
+        subject_id : str, int
+            The ID of the subject to check.
+
+        Returns
+        -------
+        in_gaia : bool
+            Whether or not the subject is in Gaia.
+        """
+
+        # Get the subject's metadata
+        subject_metadata = self.getSubjectMetadata(subject_id)
+        RA = subject_metadata["RA"]
+        DEC = subject_metadata["DEC"]
+        coords = [RA, DEC]
+
+        simbad_link = self.getSIMBADLink(subject_id)
+        radius = self.extract_radius_from_link(simbad_link)
+
+        FOV = math.sqrt(2) * radius
+
+        return GaiaChecker.isInGaia(coords, FOV=FOV)
 
     def subjectExists(self, subject_id):
         """
@@ -753,21 +928,48 @@ class Analyzer:
         # Return the bitmask type associated with the bitmask value
         return bitmask_dict.get(bitmask, None)
 
-    def determineSuccessCount(self):
+    def getSubjectType(self, subject_id):
+        # Get the bitmask for the subject
+        bitmask = self.getSubjectMetadataField(subject_id, "#BITMASK")
+
+        if(bitmask is None):
+            print(f"Subject {subject_id} does not have a bitmask, so its type cannot be determined.")
+            return None
+
+        # Convert the bitmask to a subject type
+        bitmask_type = self.bitmaskToType(bitmask)
+
+        return bitmask_type
+
+    def isAcceptableCandidate(self, subject_id, acceptance_ratio):
+        subject_type = self.getSubjectType(subject_id)
+        subject_classifications = self.getSubjectClassifications(subject_id)
+
+        # Count the number of successful classifications for each of the bitmask types
+        total_classifications = subject_classifications["yes"] + subject_classifications["no"]
+        movement_ratio = subject_classifications["yes"] / total_classifications
+        non_movement_ratio = subject_classifications["no"] / total_classifications
+
+        if (subject_type == "SMDET Candidate"):
+            return movement_ratio > acceptance_ratio, subject_classifications
+        else:
+            return False, subject_classifications
+
+    def determineAcceptanceCounts(self, acceptance_ratio):
         """
-        Determines the success count of each subject type.
+        Determines the acceptance count of each subject type.
         
         Returns
         -------
         success_count_dict : dict
-            A dictionary containing the success count of each subject type,
+            A dictionary containing the acceptance count of each subject type,
             if there is a known correct answer.
 
         Notes
         -----
         The success count is the number of subjects of a given type that have been classified correctly.
         This is only applicable to subjects that have a known correct answer, such as known brown dwarfs, quasars,
-        white dwarfs, and random sky locations.
+        and random sky locations.
         """
 
         # Get the subject IDs
@@ -779,45 +981,116 @@ class Analyzer:
         # Iterate through the subject IDs
         for subject_id in subject_ids:
 
-            # Get the bitmask for the subject
-            try:
-                bitmask = self.getSubjectMetadataField(subject_id, "#BITMASK")
-            except AttributeError:
-                continue
-
-            # Convert the bitmask to a subject type
-            bitmask_type = self.bitmaskToType(bitmask)
+            subject_type = self.getSubjectType(subject_id)
 
             # If the bitmask type is None, continue
-            if bitmask_type is None:
+            if subject_type is None:
                 continue
 
             # If the bitmask type is not in the success count dictionary, add it
-            if bitmask_type not in success_count_dict:
-                success_count_dict[bitmask_type] = {"total": 0, "success": 0}
+            if subject_type not in success_count_dict:
+                success_count_dict[subject_type] = {"total": 0, "success": 0}
 
             # Increment the total count for the bitmask type
-            success_count_dict[bitmask_type]["total"] += 1
+            success_count_dict[subject_type]["total"] += 1
 
             # Get the subject classifications
-            subject_classifications = self.subjectClassifications(subject_id)
+            subject_classifications = self.getSubjectClassifications(subject_id)
 
             # Count the number of successful classifications for each of the bitmask types
-            if(bitmask_type == "Known Brown Dwarf"):
-                if(subject_classifications["yes"] > subject_classifications["no"]):
-                    success_count_dict[bitmask_type]["success"] += 1
-            elif(bitmask_type == "Quasar"):
-                if(subject_classifications["no"] > subject_classifications["yes"]):
-                    success_count_dict[bitmask_type]["success"] += 1
-            elif(bitmask_type == "White Dwarf"):
-                if(subject_classifications["no"] > subject_classifications["yes"]):
-                    success_count_dict[bitmask_type]["success"] += 1
-            elif(bitmask_type == "SMDET Candidate"):
-                success_count_dict[bitmask_type]["success"] = None
-            elif(bitmask_type == "Random Sky Location"):
-                if (subject_classifications["no"] > subject_classifications["yes"]):
-                    success_count_dict[bitmask_type]["success"] += 1
+            total_classifications = subject_classifications["yes"] + subject_classifications["no"]
+            movement_ratio = subject_classifications["yes"] / total_classifications
+            non_movement_ratio = subject_classifications["no"] / total_classifications
+
+            if(subject_type == "Known Brown Dwarf"):
+                if(movement_ratio >= acceptance_ratio):
+                    success_count_dict[subject_type]["success"] += 1
+            elif(subject_type == "Quasar"):
+                if(non_movement_ratio >= acceptance_ratio):
+                    success_count_dict[subject_type]["success"] += 1
+            elif(subject_type == "White Dwarf"):
+                success_count_dict[subject_type]["success"] = None
+            elif(subject_type == "SMDET Candidate"):
+                success_count_dict[subject_type]["success"] = None
+            elif(subject_type == "Random Sky Location"):
+                if (non_movement_ratio >= acceptance_ratio):
+                    success_count_dict[subject_type]["success"] += 1
 
         # Return the success count dictionary
         return success_count_dict
+
+    @staticmethod
+    def combineSubjectDataframes(subject_dataframe_list):
+        """
+        Combines a list of subject dataframes into a single subject dataframe.
+
+        Parameters
+        ----------
+        subject_dataframe_list : list
+            A list of subject dataframes to combine.
+
+        Returns
+        -------
+        combined_subject_dataframe : pandas.DataFrame
+            The combined subject dataframe.
+        """
+
+        if(len(subject_dataframe_list) == 0):
+            return pd.DataFrame()
+
+        # Combine the subject dataframes
+        combined_subject_dataframe = pd.concat(subject_dataframe_list, ignore_index=True)
+
+        # Drop any duplicate subjects
+        combined_subject_dataframe.drop_duplicates(subset=["subject_id"], inplace=True)
+
+        # Return the combined subject dataframe
+        return combined_subject_dataframe
+
+    @staticmethod
+    def saveSubjectDataframe(subject_dataframe, filename):
+        """
+        Saves the subject dataframe to a CSV file.
+
+        Parameters
+        ----------
+        subject_dataframe : pandas.DataFrame
+            The subject dataframe to save.
+        filename : str
+            The name of the file to save the subject dataframe to.
+        """
+
+        # Save the subject dataframe to a CSV file
+        subject_dataframe.to_csv(filename, index=False)
+
+    @staticmethod
+    def loadSubjectDataframe(filename):
+        """
+        Loads the subject dataframe from a CSV file.
+
+        Parameters
+        ----------
+        filename : str
+            The name of the file to load the subject dataframe from.
+
+        Returns
+        -------
+        subject_dataframe : pandas.DataFrame
+            The subject dataframe loaded from the CSV file.
+        """
+
+        # Load the subject dataframe from a CSV file
+        subject_dataframe = pd.read_csv(filename)
+
+        # Return the subject dataframe
+        return subject_dataframe
+
+    @staticmethod
+    def plotSubjectDataframe(subject_dataframe):
+        # create a temporary csv file of the subject dataframe
+        subject_dataframe.to_csv("temp.csv", index=False)
+        subject_csv_plotter = SubjectCSVPlotter("temp.csv")
+        subject_csv_plotter.plot()
+        os.remove("temp.csv")
+
 
