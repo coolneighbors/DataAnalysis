@@ -200,20 +200,46 @@ class Analyzer:
         top_users_dict = self.getTopUsers(count_threshold=count_threshold, percentile=percentile)
         return sum(top_users_dict.values())
 
-    def plotTopUsersClassificationCounts(self, count_threshold=None, percentile=None):
+    def plotTopUsersClassificationCounts(self, count_threshold=None, percentile=None, **kwargs):
         top_users_dict = self.getTopUsers(count_threshold=count_threshold, percentile=percentile)
-        plt.bar(top_users_dict.keys(), top_users_dict.values())
+        # Plot the number of classifications made by each user but stop names from overlapping
+        usernames = list(top_users_dict.keys())
+        user_counts = list(top_users_dict.values())
+        # Generate x-coordinates for the bars
+        x = np.arange(len(top_users_dict))
 
-        for key, value in top_users_dict.items():
-            # Place the number of classifications above the bar
-            plt.text(key, value + 10, str(value), horizontalalignment='center', verticalalignment='bottom', fontsize=10)
+        # Create the bar plot
+        fig, ax = plt.subplots()
 
-        plt.xlabel("Username", fontsize=15)
-        plt.ylabel("Number of Classifications", fontsize=15)
-        if(percentile is not None):
-            plt.title(f"Users in the top {100 - percentile}% of classifications")
-        elif(count_threshold is not None):
-            plt.title(f"Users with more than {count_threshold} classifications")
+        if ("title" in kwargs):
+            plt.title(kwargs["title"])
+            del kwargs["title"]
+        else:
+            if (percentile is not None):
+                plt.title(f"Users in the Top {100 - percentile}% of Classifications")
+            elif (count_threshold is not None):
+                plt.title(f"Users with More Than {count_threshold} Classifications")
+
+        if ("ylabel" in kwargs):
+            plt.ylabel(kwargs["ylabel"])
+            del kwargs["ylabel"]
+        else:
+            plt.ylabel("Number of Classifications", fontsize=15)
+
+        bars = ax.bar(x, user_counts, **kwargs)
+
+        for i, bar in enumerate(bars):
+            # Display the username below the bar, but angled 45 degrees
+            offset = 0.2
+            ax.text(bar.get_x() + bar.get_width() / 2 + offset, -5, usernames[i], ha='right', va='top', rotation=45)
+
+            # Display the user's count
+            ax.text(bar.get_x() + bar.get_width() / 2, user_counts[i] + 10, str(user_counts[i]), horizontalalignment='center', verticalalignment='bottom', fontsize=10)
+
+        # Customize the plot
+        ax.set_xticks(x)
+        ax.set_xticklabels([])
+
         plt.show()
 
     def getSubjectIDs(self):
@@ -240,7 +266,7 @@ class Analyzer:
 
         Parameters
         ----------
-        subject_id : str or int
+        subject_id : str or int, or list of str or int, or tuple of str or int
             The subject's Zooniverse ID.
         type : str, optional
             The type of dataframe to return. Can be either "reduced", "extracted", or default.
@@ -248,10 +274,17 @@ class Analyzer:
 
         Returns
         -------
-        subject_dataframe : pandas.DataFrame
-            The reduced (or extracted) dataframe of the classifications made for that subject.
-
+        subject_dataframe : pandas.DataFrame or list of pandas.DataFrame
+            The dataframe(s) for that subject or subjects.
         """
+
+        if(isinstance(subject_id, list) or isinstance(subject_id, tuple)):
+            # If the subject_id is a list or tuple, then return a list of dataframes
+            subject_dataframes = []
+            for id in subject_id:
+                subject_dataframes.append(self.getSubjectDataframe(id, type=type))
+            return subject_dataframes
+
         if(type == "default"):
             # If default, then return the metadata of the subject as a dataframe
             subject_metadata = self.getSubjectMetadata(subject_id)
@@ -328,17 +361,31 @@ class Analyzer:
         classification_count_dict = self.getClassificationCountDict(total_subject_count)
         return sum(value for key, value in classification_count_dict.items() if key >= minimum_count)
 
-    def plotClassificationCounts(self, total_subject_count=None):
+    def plotClassificationDistribution(self, total_subject_count=None, **kwargs):
+        # if title is in kwargs, then remove it and put its value in the title
+        if("title" in kwargs):
+            plt.title(kwargs["title"])
+            del kwargs["title"]
+        else:
+            plt.title("Classification Distribution")
+
+        if("xlabel" in kwargs):
+            plt.xlabel(kwargs["xlabel"])
+            del kwargs["xlabel"]
+        else:
+            plt.xlabel("Number of Classifications")
+        if("ylabel" in kwargs):
+            plt.ylabel(kwargs["ylabel"])
+            del kwargs["ylabel"]
+        else:
+            plt.ylabel("Number of Subjects")
+
         number_of_classifications_dict = self.getClassificationCountDict(total_subject_count)
 
-        plt.bar(number_of_classifications_dict.keys(), number_of_classifications_dict.values())
+        plt.bar(number_of_classifications_dict.keys(), number_of_classifications_dict.values(), **kwargs)
 
         for key in number_of_classifications_dict:
             plt.text(key, number_of_classifications_dict[key], number_of_classifications_dict[key], ha='center', va='bottom')
-
-        plt.xlabel("Number of Classifications")
-        plt.ylabel("Number of Subjects")
-        plt.title("Classification Count Distribution")
 
         plt.xticks(range(len(number_of_classifications_dict)))
         plt.show()
@@ -355,7 +402,7 @@ class Analyzer:
         Notes
         -----
         This method is useful for visualizing the number of "yes" and "no" classifications for a particular subject.
-        In particular, this helps easily see whether or not a subject has been classified as a "yes" or "no" more often.
+        In particular, this helps easily see whether a subject has been classified as a "yes" or "no" more often.
         """
 
         # Get the number of "yes" and "no" classifications for that subject as a dictionary
@@ -665,7 +712,7 @@ class Analyzer:
         wise_view_link = wise_view_link.removeprefix("[WiseView](+tab+")
         wise_view_link = wise_view_link.removesuffix(")")
 
-        # Determine whether or not to open the subject in the default web browser
+        # Determine whether to open the subject in the default web browser
         if wise_view_link is None:
             print(f"No WiseView link found for subject {subject_id}")
             return None
@@ -728,7 +775,7 @@ class Analyzer:
 
         return simbad_link
 
-    def getSIMBADQuery(self, subject_id, plot=False, FOV=None, radius=None, separation=None, *args):
+    def getSIMBADQuery(self, subject_id, args=(), plot=False, FOV=None, radius=None, separation=None):
         # Get the subject's metadata
         simbad_link = self.getSIMBADLink(subject_id)
 
@@ -743,22 +790,18 @@ class Analyzer:
         SBC = SIMBADChecker()
 
         if(FOV is None and radius is None):
-            # Get the radius from the SIMBAD link
-            radius = self.extract_radius_from_link(simbad_link)
-            FOV = math.sqrt(2) * radius
-            result = SBC.getSIMBADQuery(coords, *args, FOV=FOV)
-            print("Result:", result)
+            FOV = 120
+            result = SBC.getSIMBADQuery(coords, args, FOV=FOV)
             if (plot):
-                print("Plotting...")
                 SBC.plotEntries(coords, result, FOV=FOV, separation=separation)
         else:
-            result = SBC.getSIMBADQuery(coords, *args, FOV=FOV, radius=radius)
+            result = SBC.getSIMBADQuery(coords, args, FOV=FOV, radius=radius)
             if (plot):
                 SBC.plotEntries(coords, result, FOV=FOV, radius=radius, separation=separation)
 
         return result
 
-    def checkSIMBADQuery(self, subject_id, plot=False, FOV=None, radius=None, otypes=["BD*", "BD?", "BrownD*", "BrownD?", "BrownD*_Candidate", "PM*"], *args):
+    def checkSIMBADQuery(self, subject_id, args=(), plot=False, FOV=None, radius=None, separation=None, otypes=["BD*", "BD?", "BrownD*", "BrownD?", "BrownD*_Candidate", "PM*"]):
         # Get the subject's metadata
         simbad_link = self.getSIMBADLink(subject_id)
 
@@ -771,13 +814,20 @@ class Analyzer:
         coords = [RA, DEC]
 
         conditional_arg = SIMBADChecker.buildConditionalArgument("otypes", "==", otypes)
-        simbad_checker = SIMBADChecker(conditional_arg)
+        SBC = SIMBADChecker(conditional_arg)
 
-        simbad_checker.getQuery(coords, *args, FOV=FOV, radius=radius)
-        result = simbad_checker.checkQuery()
+        if (FOV is None and radius is None):
+            FOV = 120
+            SBC.getQuery(coords, args, FOV=FOV, radius=radius)
+            result = SBC.checkQuery()
 
-        if(plot):
-            simbad_checker.plotEntries(coords, result, FOV=FOV, radius=radius)
+            if (plot):
+                SBC.plotEntries(coords, result, FOV=FOV, separation=separation)
+        else:
+            SBC.getQuery(coords, args, FOV=FOV, radius=radius)
+            result = SBC.checkQuery()
+            if (plot):
+                SBC.plotEntries(coords, result, FOV=FOV, radius=radius, separation=separation)
 
         return result
 
@@ -1019,9 +1069,6 @@ class Analyzer:
                 database_check_dict[database] = not query.empty
 
         return database_check_dict, database_query_dict
-
-
-
 
     def determineAcceptanceCounts(self, acceptance_ratio):
         """

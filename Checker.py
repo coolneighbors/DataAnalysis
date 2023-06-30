@@ -177,8 +177,11 @@ class Checker(ABC):
                 try:
                     dataframe[possible_ra_name].astype(float)
                     return possible_ra_name, possible_dec_names[index]
-                except TypeError:
-                    continue
+                except Exception as e:
+                    if(isinstance(e, ValueError) or isinstance(e, TypeError)):
+                        continue
+                    else:
+                        raise e
 
         raise ValueError("Could not find RA and DEC columns in dataframe.")
 
@@ -232,8 +235,9 @@ class Checker(ABC):
 
         # Plot the entries
         ra_column_name, dec_column_name = Checker.determineDataframeCoordinateNames(result_dataframe)
-        print(ra_column_name, dec_column_name)
-        ax.scatter(result_dataframe[ra_column_name], result_dataframe[dec_column_name], transform=ax.get_transform('world'), s=3, c='k')
+
+        if(len(result_dataframe) > 0):
+            ax.scatter(result_dataframe[ra_column_name], result_dataframe[dec_column_name], transform=ax.get_transform('world'), s=3, c='k')
 
         handles = []
         labels = []
@@ -380,7 +384,7 @@ class SIMBADChecker(Checker):
             return True
 
     @staticmethod
-    def getSIMBADQuery(coordinates, FOV=None, radius=None, *args):
+    def getSIMBADQuery(coordinates, args=(), FOV=None, radius=None):
         ra, dec, FOV, radius, search_type = SIMBADChecker.convertInput(coordinates, FOV, radius)
 
         with warnings.catch_warnings():
@@ -447,7 +451,7 @@ class SIMBADChecker(Checker):
 
         criteria_args = self.getCriteriaArgs(self.conditional_args)
 
-        self.full_result_table = self.getSIMBADQuery(coordinates, FOV, radius, *criteria_args)
+        self.full_result_table = self.getSIMBADQuery(coordinates, criteria_args, FOV=FOV, radius=radius)
         if(self.full_result_table is not None):
             self.full_result_dataframe = self.full_result_table.to_pandas()
         else:
