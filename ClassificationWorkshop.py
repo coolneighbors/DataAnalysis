@@ -18,7 +18,6 @@ unique_users = analyzer.getUniqueUsers()
 accepted_subjects = []
 acceptance_ratio = 0.7
 
-
 for subject_id in subject_ids:
     subject_metadata = analyzer.getSubjectMetadata(subject_id)
     acceptable_boolean, subject_classifications_dict = analyzer.isAcceptableCandidate(subject_id, acceptance_ratio=acceptance_ratio)
@@ -30,33 +29,34 @@ print(f"Number of accepted subjects: {len(accepted_subjects)}")
 
 not_in_simbad_subjects = []
 not_in_gaia_subjects = []
-
 not_in_either_subjects = []
 
-
-
+separation = 32
 for index, subject_id in enumerate(accepted_subjects):
     print("Checking subject " + str(subject_id) + f" ({index + 1} out of {len(accepted_subjects)})")
-    simbad_result = analyzer.getSIMBADQuery(subject_id)
-    if(simbad_result is None):
-        print("SIMBAD query failed for subject " + str(subject_id))
-        continue
-    in_simbad = len(simbad_result) > 0
-
-    gaia_result = analyzer.getGaiaQuery(subject_id)
-    if(gaia_result is None):
-        print("Gaia query failed for subject " + str(subject_id))
-        continue
-    in_gaia = len(gaia_result) > 0
-
-    if(not in_simbad and not in_gaia):
-        not_in_simbad_subjects.append(subject_id)
-        not_in_gaia_subjects.append(subject_id)
+    database_check_dict, database_query_dict = analyzer.checkSubjectFieldOfView(subject_id, gaia_separation=separation)
+    no_database = not any(database_check_dict.values())
+    if (no_database):
+        print(f"Subject {subject_id} is not in either database.")
         not_in_either_subjects.append(subject_id)
-    elif(not in_simbad):
         not_in_simbad_subjects.append(subject_id)
-    elif(not in_gaia):
         not_in_gaia_subjects.append(subject_id)
+    else:
+        for database_name, in_database in database_check_dict.items():
+            if (not in_database):
+                if (database_name == "SIMBAD"):
+                    print(f"Subject {subject_id} is not in SIMBAD.")
+                    not_in_simbad_subjects.append(subject_id)
+                elif (database_name == "Gaia"):
+                    print(f"Subject {subject_id} is not in Gaia.")
+                    not_in_gaia_subjects.append(subject_id)
+            else:
+                if(database_name == "SIMBAD"):
+                    print(f"Subject {subject_id} is in SIMBAD.")
+                elif(database_name == "Gaia"):
+                    print(f"Subject {subject_id} is in Gaia.")
+
+
 
 not_in_simbad_subject_dataframes = []
 not_in_gaia_subject_dataframes = []

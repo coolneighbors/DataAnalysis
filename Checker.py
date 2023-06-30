@@ -162,7 +162,28 @@ class Checker(ABC):
         return ra_min, ra_max, dec_min, dec_max
 
     @staticmethod
-    def plotEntries(center_coordinates, result_dataframe, **kwargs):
+    def determineDataframeCoordinateNames(dataframe):
+        possible_ra_names = ['ra', 'RA', 'RA_d']
+        possible_dec_names = ['dec', 'DEC', 'DEC_d']
+
+        if(dataframe is None):
+            return None, None
+
+        if(len(dataframe) == 0):
+            return None, None
+
+        for index, possible_ra_name in enumerate(possible_ra_names):
+            if(possible_ra_name in dataframe.columns):
+                try:
+                    dataframe[possible_ra_name].astype(float)
+                    return possible_ra_name, possible_dec_names[index]
+                except TypeError:
+                    continue
+
+        raise ValueError("Could not find RA and DEC columns in dataframe.")
+
+    @classmethod
+    def plotEntries(cls, center_coordinates, result_dataframe, **kwargs):
         # TODO: Add way to add labels to the sources
         # TODO: Add way to plot multiple queries on the same plot with different colors
         if(result_dataframe is None):
@@ -176,8 +197,8 @@ class Checker(ABC):
         ra, dec, FOV, radius, search_type = Checker.convertInput(center_coordinates, FOV, radius)
         deg_radius = radius / 3600
 
-        distance_threshold = kwargs.get('distance_threshold', None)
-        distance_threshold = Checker.convertAngle(distance_threshold)
+        separation = kwargs.get('separation', None)
+        separation = Checker.convertAngle(separation)
         #plt.style.use(astropy_mpl_style)
 
         # Plot the Gaia entries in a 2D plot
@@ -209,26 +230,10 @@ class Checker(ABC):
         # Plot the center coordinates
         ax.plot(ra, dec, '+', transform=ax.get_transform('world'), color='green', markersize=10)
 
-        # List of lists of possible column names for the coordinates
-        coordinate_column_names = [['ra', 'dec'], ['RA', 'DEC'], ['RA_d', 'DEC_d']]
-
         # Plot the entries
-        successful_plot = False
-        for index, coordinate_column_name in enumerate(coordinate_column_names):
-            # If the dataframe contains the RA and DEC columns, plot them
-            if (coordinate_column_name[0] not in result_dataframe.columns or coordinate_column_name[1] not in result_dataframe.columns):
-                continue
-
-            # Check if the datafrane is empty
-            if (len(result_dataframe) == 0 or result_dataframe.empty):
-                successful_plot = True
-                break
-
-            ax.scatter(result_dataframe[coordinate_column_name[0]], result_dataframe[coordinate_column_name[1]], transform=ax.get_transform('world'), s=3, c='k')
-            successful_plot = True
-
-        if(not successful_plot):
-            raise KeyError("Could not find RA and DEC columns in the result dataframe.")
+        ra_column_name, dec_column_name = Checker.determineDataframeCoordinateNames(result_dataframe)
+        print(ra_column_name, dec_column_name)
+        ax.scatter(result_dataframe[ra_column_name], result_dataframe[dec_column_name], transform=ax.get_transform('world'), s=3, c='k')
 
         handles = []
         labels = []
@@ -259,14 +264,14 @@ class Checker(ABC):
             handles.append(search_circle)
             labels.append("Search Radius")
 
-        if (distance_threshold is not None):
-            deg_distance_threshold = distance_threshold / 3600
-            distance_threshold_circle = SphericalCircle((ra, dec) * u.deg, deg_distance_threshold * u.deg, transform=ax.get_transform('world'), edgecolor='red', facecolor='none', linestyle='dashed')
-            ax.add_patch(distance_threshold_circle)
+        if (separation is not None):
+            deg_separation = separation / 3600
+            separation_circle = SphericalCircle((ra, dec) * u.deg, deg_separation * u.deg, transform=ax.get_transform('world'), edgecolor='red', facecolor='none', linestyle='dashed')
+            ax.add_patch(separation_circle)
 
             # Add to existing legend
-            handles.append(distance_threshold_circle)
-            labels.append("Distance Threshold")
+            handles.append(separation_circle)
+            labels.append("Separation")
 
         # Add the legend
         ax.legend(handles=handles, labels=labels, loc='upper right', fontsize=10)
@@ -274,13 +279,54 @@ class Checker(ABC):
         # Set the axis labels
         plt.xlabel("RA")
         plt.ylabel("Dec")
-        plt.title(f"Valid Query Results: {len(result_dataframe)}")
+
+        # Get the database name from the class name
+        database_name = cls.__name__.replace("Checker", "")
+        if(database_name != ""):
+            plt.title(f"{database_name} Query Results: {len(result_dataframe)}")
+        else:
+            plt.title(f"Query Results: {len(result_dataframe)}")
 
         # Reverse x-axis
         ax.invert_xaxis()
 
         # Show the plot
         plt.show()
+
+    @staticmethod
+    def filterBySeparation(coordinates, dataframe, separation):
+        """
+        Filter the dataframe by distance from the coordinates
+
+        Parameters
+        ----------
+        coordinates : SkyCoord
+            The coordinates to filter by
+        dataframe : pandas.DataFrame
+            The dataframe to filter
+        separation : float
+            The maximum separation in arcseconds
+
+        Returns
+        -------
+        pandas.DataFrame
+        """
+
+        ra_column_name, dec_column_name = Checker.determineDataframeCoordinateNames(dataframe)
+
+        # Calculate the distance between the coordinates and the dataframe
+
+        ra, dec = Checker.convertCoordinates(coordinates)
+        coordinates = SkyCoord(ra, dec, unit=(u.deg, u.deg))
+
+        if(ra_column_name is None or dec_column_name is None):
+            return dataframe
+
+        angular_separations = coordinates.separation(SkyCoord(dataframe[ra_column_name], dataframe[dec_column_name], unit=(u.deg, u.deg)))
+        filtered_dataframe = dataframe[angular_separations < separation * u.arcsec]
+        # Reindex the dataframe
+        filtered_dataframe = filtered_dataframe.reset_index(drop=True)
+        return filtered_dataframe
 
 #TODO: Investigate vectorized queries
 #TODO: Verify if I am requesting too often from SIMBAD
@@ -359,9 +405,9 @@ class SIMBADChecker(Checker):
                     box_search_string = f"region(box, {ra} -{dec}, {FOV}s {FOV}s)"
                 else:
                     box_search_string = f"region(box, {ra} +{dec}, {FOV}s {FOV}s)"
-                print("BOX SEARCH STRING: ", box_search_string)
+
                 result_table = simbad_query.query_criteria(box_search_string)
-                print("RESULT TABLE: ", result_table)
+
             elif(search_type == "Cone Search"):
                 result_table = simbad_query.query_region(target_coords, radius=radius * u.arcsec)
 
@@ -550,6 +596,7 @@ class SIMBADChecker(Checker):
                     result_dataframe.reset_index(drop=True, inplace=True)
                     boolean_series = self.checkCondition(result_dataframe, conditional_arg)
                     result_dataframe = result_dataframe[boolean_series]
+                    result_dataframe.reset_index(drop=True, inplace=True)
                     self.result_table = self.result_table[boolean_series.values]
 
             return copy(result_dataframe)
@@ -609,8 +656,8 @@ class SIMBADChecker(Checker):
 
 class GaiaChecker(Checker):
 
-    def __init__(self, distance_threshold=0.0025):
-        self.distance_threshold = distance_threshold
+    def __init__(self, separation):
+        self.separation = separation
         Gaia.ROW_LIMIT = 200  # Ensure the default row limit.
         Gaia.MAIN_GAIA_TABLE = "gaiadr3.gaia_source"
 
@@ -625,21 +672,13 @@ class GaiaChecker(Checker):
         ra, dec, FOV, radius, search_type = GaiaChecker.convertInput(coordinates, FOV, radius)
 
         # Create a WCS object
-        fits_header = fits.Header()
-        fits_header['CTYPE1'] = 'RA---TAN'
-        fits_header['CTYPE2'] = 'DEC--TAN'
-        fits_header['CDELT1'] = -0.000763888888889
-        fits_header['CDELT2'] = 0.000763888888889
-        fits_header['CRVAL1'] = ra  # Reference RA value in degrees
-        fits_header['CRVAL2'] = dec  # Reference DEC value in degrees
-        fits_header['CRPIX1'] = 0  # Reference pixel in X (RA) direction
-        fits_header['CRPIX2'] = 0  # Reference pixel in Y (DEC) direction
+        default_wcs = Checker.createWCS(ra, dec)
 
-        my_wcs = wcs.WCS(fits_header)
+        r = None
 
         if(search_type == "Box Search"):
             center_coords = SkyCoord(ra=ra, dec=dec, unit=(u.deg, u.deg), frame='icrs')
-            ra_min, ra_max, dec_min, dec_max = Checker.getFOVLimits(center_coords, FOV, my_wcs)
+            ra_min, ra_max, dec_min, dec_max = Checker.getFOVLimits(center_coords, FOV, default_wcs)
             j = Gaia.launch_job_async(f"SELECT designation, ra, dec, parallax, pmra, pmdec, DISTANCE({ra}, {dec}, ra, dec) AS dist " + "FROM gaiadr3.gaia_source " + f"WHERE ra BETWEEN {ra_min} AND {ra_max} AND dec BETWEEN {dec_min} AND {dec_max} " + "ORDER BY dist ASC")
             r = j.get_results()
         elif(search_type == "Cone Search"):
@@ -648,21 +687,7 @@ class GaiaChecker(Checker):
             r = j.get_results()
 
         return r
-    """
-        ra, dec, FOV, radius, search_type = GaiaChecker.convertInput(coordinates, FOV, radius)
-        coords = SkyCoord(ra=ra, dec=dec, unit=(u.deg, u.deg), frame='icrs')
-        print("FOV: {}".format(FOV))
-        if(search_type == "Box Search"):
-            r = Gaia.query_object_async(coordinate=coords, width=FOV * u.arcsec, height=FOV * u.arcsec)
-            print(r)
-        elif(search_type == "Cone Search"):
-            j = Gaia.cone_search_async(coords, radius=u.Quantity(radius, u.arcsec))
-            r = j.get_results()
-        else:
-            raise ValueError("search_type must be either 'Box Search' or 'Cone Search'")
 
-        return r
-    """
     @staticmethod
     def showGaiaEntries(result_dataframe, FOV=120, open_link=False):
         for index, source in result_dataframe.iterrows():
@@ -694,10 +719,12 @@ class GaiaChecker(Checker):
         else:
             self.result_dataframe = copy(self.full_result_dataframe)
             self.result_table = copy(self.full_result_table)
-            distance_threshold_in_degrees = self.distance_threshold / 3600
-            print("Distance threshold in degrees: {}".format(distance_threshold_in_degrees))
-            self.result_dataframe = self.result_dataframe[self.result_dataframe['dist'] <= distance_threshold_in_degrees]
-            self.result_table = self.result_table[self.result_table['dist'] <= distance_threshold_in_degrees]
-            return copy(self.result_dataframe)
+            if(self.separation is None):
+                return copy(self.result_dataframe)
+            else:
+                separation_in_degrees = self.separation / 3600
+                self.result_dataframe = self.result_dataframe[self.result_dataframe['dist'] <= separation_in_degrees]
+                self.result_table = self.result_table[self.result_table['dist'] <= separation_in_degrees]
+                return copy(self.result_dataframe)
 
 

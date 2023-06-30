@@ -394,7 +394,7 @@ class Analyzer:
         There is an upper time limit of 5 minutes between classifications when computing the average time.
         """
 
-        # Get the unique user names
+        # Get the unique usernames
         user_names = self.getUniqueUsers()
 
         # Initialize the list of classification times
@@ -645,7 +645,7 @@ class Analyzer:
         subject_id : str, int
             The ID of the subject to show.
         open_in_browser : bool
-            Whether or not to open the subject in the default web browser. Default is False.
+            Whether to open the subject in the default web browser. Default is False.
         
         Returns
         -------
@@ -728,7 +728,7 @@ class Analyzer:
 
         return simbad_link
 
-    def getSIMBADQuery(self, subject_id, plot=False, *args):
+    def getSIMBADQuery(self, subject_id, plot=False, FOV=None, radius=None, separation=None, *args):
         # Get the subject's metadata
         simbad_link = self.getSIMBADLink(subject_id)
 
@@ -740,20 +740,25 @@ class Analyzer:
         RA, DEC = self.extract_coordinates_from_link(simbad_link)
         coords = [RA, DEC]
 
-        # Get the radius from the SIMBAD link
-        radius = self.extract_radius_from_link(simbad_link)
-
-        FOV = math.sqrt(2) * radius
         SBC = SIMBADChecker()
 
-        result = SBC.getSIMBADQuery(coords, *args, FOV=FOV)
-
-        if(plot):
-            SBC.plotEntries(coords, result, FOV=FOV)
+        if(FOV is None and radius is None):
+            # Get the radius from the SIMBAD link
+            radius = self.extract_radius_from_link(simbad_link)
+            FOV = math.sqrt(2) * radius
+            result = SBC.getSIMBADQuery(coords, *args, FOV=FOV)
+            print("Result:", result)
+            if (plot):
+                print("Plotting...")
+                SBC.plotEntries(coords, result, FOV=FOV, separation=separation)
+        else:
+            result = SBC.getSIMBADQuery(coords, *args, FOV=FOV, radius=radius)
+            if (plot):
+                SBC.plotEntries(coords, result, FOV=FOV, radius=radius, separation=separation)
 
         return result
 
-    def checkSIMBADQuery(self, subject_id, plot=False, otypes=["BD*", "BD?", "BrownD*", "BrownD?", "BrownD*_Candidate", "PM*"], *args):
+    def checkSIMBADQuery(self, subject_id, plot=False, FOV=None, radius=None, otypes=["BD*", "BD?", "BrownD*", "BrownD?", "BrownD*_Candidate", "PM*"], *args):
         # Get the subject's metadata
         simbad_link = self.getSIMBADLink(subject_id)
 
@@ -765,24 +770,20 @@ class Analyzer:
         RA, DEC = self.extract_coordinates_from_link(simbad_link)
         coords = [RA, DEC]
 
-        # Get the radius from the SIMBAD link
-        radius = self.extract_radius_from_link(simbad_link)
-
-        FOV = math.sqrt(2) * radius
-
         conditional_arg = SIMBADChecker.buildConditionalArgument("otypes", "==", otypes)
         simbad_checker = SIMBADChecker(conditional_arg)
-        simbad_checker.getQuery(coords, *args, FOV=FOV)
+
+        simbad_checker.getQuery(coords, *args, FOV=FOV, radius=radius)
         result = simbad_checker.checkQuery()
 
         if(plot):
-            simbad_checker.plotEntries(coords, result, FOV=FOV)
+            simbad_checker.plotEntries(coords, result, FOV=FOV, radius=radius)
 
         return result
 
     def isInSIMBAD(self, subject_id):
         """
-        Determines whether or not the subject is in SIMBAD.
+        Determines whether the subject is in SIMBAD.
 
         Parameters
         ----------
@@ -792,7 +793,7 @@ class Analyzer:
         Returns
         -------
         in_simbad : bool
-            Whether or not the subject is in SIMBAD.
+            Whether the subject is in SIMBAD.
         """
 
         # Get the subject's metadata
@@ -804,56 +805,56 @@ class Analyzer:
 
         # Get RA and Dec from the SIMBAD link
         RA, DEC = self.extract_coordinates_from_link(simbad_link)
+        coords = [RA, DEC]
 
         # Get the radius from the SIMBAD link
         radius = self.extract_radius_from_link(simbad_link)
 
         FOV = math.sqrt(2) * radius
 
-        return SIMBADChecker.isInSIMBAD(RA, DEC, FOV=FOV)
+        return SIMBADChecker.isInSIMBAD(coords, FOV=FOV)
 
-    def getGaiaQuery(self, subject_id, plot=False):
+    def getGaiaQuery(self, subject_id, FOV=None, radius=None, separation=None, plot=False):
         # Get the subject's metadata
         subject_metadata = self.getSubjectMetadata(subject_id)
         RA = subject_metadata["RA"]
         DEC = subject_metadata["DEC"]
         coords = [RA, DEC]
 
-        simbad_link = self.getSIMBADLink(subject_id)
-        radius = self.extract_radius_from_link(simbad_link)
-
-        FOV = math.sqrt(2) * radius
-
-        GC = GaiaChecker(distance_threshold=np.inf)
-        result = GC.getQuery(coords, FOV=FOV)
-
-        if(plot):
-            GC.plotEntries(coords, result, FOV=FOV)
+        if(FOV is None and radius is None):
+            simbad_link = self.getSIMBADLink(subject_id)
+            radius = self.extract_radius_from_link(simbad_link)
+            FOV = math.sqrt(2) * radius
+            GC = GaiaChecker(separation=None)
+            result = GC.getQuery(coords, FOV=FOV)
+            if(plot):
+                GC.plotEntries(coords, result, FOV=FOV, separation=separation)
+        else:
+            GC = GaiaChecker(separation=np.inf)
+            result = GC.getQuery(coords, FOV=FOV, radius=radius)
+            if(plot):
+                GC.plotEntries(coords, result, FOV=FOV, radius=radius, separation=separation)
         return result
 
-    def checkGaiaQuery(self, subject_id, distance_threshold, plot=False):
+    def checkGaiaQuery(self, subject_id, separation, FOV=None, radius=None, plot=False):
         # Get the subject's metadata
         subject_metadata = self.getSubjectMetadata(subject_id)
         RA = subject_metadata["RA"]
         DEC = subject_metadata["DEC"]
         coords = [RA, DEC]
 
-        simbad_link = self.getSIMBADLink(subject_id)
-        radius = self.extract_radius_from_link(simbad_link)
-
-        FOV = math.sqrt(2) * radius
-        GC = GaiaChecker(distance_threshold)
-        GC.getQuery(coords, FOV=FOV)
+        GC = GaiaChecker(separation)
+        GC.getQuery(coords, FOV=FOV, radius=radius)
         result = GC.checkQuery()
 
         if(plot):
-            GC.plotEntries(coords, result, FOV=FOV, distance_threshold=distance_threshold)
+            GC.plotEntries(coords, result, FOV=FOV, radius=radius, separation=separation)
 
         return result
 
     def isInGaia(self, subject_id):
         """
-        Determines whether or not the subject is in Gaia.
+        Determines whether the subject is in Gaia.
 
         Parameters
         ----------
@@ -881,7 +882,7 @@ class Analyzer:
 
     def subjectExists(self, subject_id):
         """
-        Determines whether or not the subject exists.
+        Determines whether the subject exists.
 
         Parameters
         ----------
@@ -891,13 +892,13 @@ class Analyzer:
         Returns
         -------
         subject_exists : bool
-            Whether or not the subject exists.
+            Whether the subject exists.
         """
 
         # Get the subject's metadata
         metadata = self.getSubjectMetadata(subject_id)
 
-        # Return whether or not the subject exists
+        # Return whether the subject exists
         return metadata is not None
 
     @staticmethod
@@ -954,6 +955,73 @@ class Analyzer:
             return movement_ratio > acceptance_ratio, subject_classifications
         else:
             return False, subject_classifications
+
+    def searchSubjectFieldOfView(self, subject_id):
+        """
+        Determines whether the subject's FOV search area has any known objects in it.
+
+        Parameters
+        ----------
+        subject_id : str, int
+            The ID of the subject to check.
+
+        Returns
+        -------
+        in_known_databases : bool
+            Whether the subject's FOV search area has any known objects in it.
+        """
+
+        # Get the subject's metadata
+        subject_metadata = self.getSubjectMetadata(subject_id)
+        RA = subject_metadata["RA"]
+        DEC = subject_metadata["DEC"]
+        coords = [RA, DEC]
+
+        simbad_link = self.getSIMBADLink(subject_id)
+        radius = self.extract_radius_from_link(simbad_link)
+
+        FOV = math.sqrt(2) * radius
+
+        database_check_dict = {"SIMBAD": SIMBADChecker.isInSIMBAD(coords, FOV=FOV), "Gaia": GaiaChecker.isInGaia(coords, FOV=FOV)}
+
+        # For each database, check if the subject's FOV search area has any known objects in it
+        if(any(database_check_dict.values())):
+            return True, database_check_dict
+        else:
+            return False, database_check_dict
+
+    def checkSubjectFieldOfView(self, subject_id, gaia_separation=None):
+        """
+        Determines whether the subject's FOV search area has any known objects in it given the distance threshold
+        and default otype conditions.
+
+        Parameters
+        ----------
+        subject_id : str, int
+            The ID of the subject to check.
+
+        Returns
+        -------
+        in_known_databases : bool
+            Whether the subject's FOV search area has any known objects in it.
+        """
+
+        simbad_query = self.checkSIMBADQuery(subject_id, FOV=120)
+        gaia_query = self.checkGaiaQuery(subject_id, FOV=120, separation=gaia_separation)
+
+        database_query_dict = {"SIMBAD": simbad_query, "Gaia": gaia_query}
+        database_check_dict = {}
+        # Check each query to determine if it is empty or None
+        for database, query in database_query_dict.items():
+            if(query is None):
+                database_check_dict[database] = False
+            else:
+                database_check_dict[database] = not query.empty
+
+        return database_check_dict, database_query_dict
+
+
+
 
     def determineAcceptanceCounts(self, acceptance_ratio):
         """
