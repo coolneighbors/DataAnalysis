@@ -16,9 +16,7 @@ import astropy.units as u
 from astroquery.simbad import Simbad
 import functools
 from unWISE_verse.Spout import Spout
-
-import Checker
-from Checker import SIMBADChecker, GaiaChecker
+from Searcher import SimbadSearcher, GaiaSearcher
 from Plotter import SubjectCSVPlotter
 
 
@@ -723,31 +721,6 @@ class Analyzer:
         # Return the WiseView link
         return wise_view_link
 
-    @staticmethod
-    def extract_coordinates_from_link(link):
-        # Extract the coordinate section from the link
-        coord_start = link.find("Coord=") + len("Coord=")
-        coord_end = link.find("&", coord_start)
-        coordinate_section = link[coord_start:coord_end]
-
-        # Split the coordinate section into RA and DEC
-        ra, dec = coordinate_section.split("+")
-
-        return float(ra), float(dec)
-
-    @staticmethod
-    def extract_radius_from_link(link):
-        # Find the index of "Radius=" in the link
-        radius_start = link.find("Radius=") + len("Radius=")
-
-        # Find the index of "&" after the radius value
-        radius_end = link.find("&", radius_start)
-
-        # Extract the radius value
-        radius = link[radius_start:radius_end]
-
-        return float(radius)
-
     def getSIMBADLink(self, subject_id):
         """
         Gets the SIMBAD link for the subject with the given subject ID.
@@ -775,65 +748,54 @@ class Analyzer:
 
         return simbad_link
 
-    def getSIMBADQuery(self, subject_id, args=(), plot=False, FOV=None, radius=None, separation=None):
-        # Get the subject's metadata
-        simbad_link = self.getSIMBADLink(subject_id)
+    def getSimbadQuery(self, subject_id, search_type="Box Search", FOV=120*u.arcsec, radius=60*u.arcsec, plot=False, separation=None):
+        subject_metadata = self.getSubjectMetadata(subject_id)
 
-        if(simbad_link is None):
-            print(f"No SIMBAD link found for subject {subject_id}, so it cannot be queried.")
-            return None
-
-        # Get RA and Dec from the SIMBAD link
-        RA, DEC = self.extract_coordinates_from_link(simbad_link)
+        RA = subject_metadata["RA"]
+        DEC = subject_metadata["DEC"]
         coords = [RA, DEC]
 
-        SBC = SIMBADChecker()
-
-        if(FOV is None and radius is None):
-            FOV = 120
-            result = SBC.getSIMBADQuery(coords, args, FOV=FOV)
-            if (plot):
-                SBC.plotEntries(coords, result, FOV=FOV, separation=separation)
+        if(search_type == "Box" or search_type == "Box Search"):
+            search_parameters = {"Coordinates": coords, "Type": search_type, "FOV": FOV}
+        elif(search_type == "Cone" or search_type == "Cone Search"):
+            search_parameters = {"Coordinates": coords, "Type": search_type, "radius": radius}
         else:
-            result = SBC.getSIMBADQuery(coords, args, FOV=FOV, radius=radius)
-            if (plot):
-                SBC.plotEntries(coords, result, FOV=FOV, radius=radius, separation=separation)
+            raise ValueError(f"Invalid search type: {search_type}. Expected 'Cone', 'Cone Search', 'Box', or 'Box Search'.")
+
+        simbad_searcher = SimbadSearcher(search_parameters)
+
+        result = simbad_searcher.getQuery()
+
+        if(plot):
+            simbad_searcher.plotEntries(separation=separation)
 
         return result
 
-    def checkSIMBADQuery(self, subject_id, args=(), plot=False, FOV=None, radius=None, separation=None, otypes=["BD*", "BD?", "BrownD*", "BrownD?", "BrownD*_Candidate", "PM*"]):
-        # Get the subject's metadata
-        simbad_link = self.getSIMBADLink(subject_id)
-
-        if(simbad_link is None):
-            print(f"No SIMBAD link found for subject {subject_id}, so its query cannot be checked.")
-            return None
-
-        # Get RA and Dec from the SIMBAD link
-        RA, DEC = self.extract_coordinates_from_link(simbad_link)
+    def getConditionalSimbadQuery(self, subject_id, search_type="Box Search", FOV=120*u.arcsec, radius=60*u.arcsec, otypes=["BD*", "BD?", "BrownD*", "BrownD?", "BrownD*_Candidate", "PM*"], plot=False, separation=None):
+        subject_metadata = self.getSubjectMetadata(subject_id)
+        RA = subject_metadata["RA"]
+        DEC = subject_metadata["DEC"]
         coords = [RA, DEC]
 
-        conditional_arg = SIMBADChecker.buildConditionalArgument("otypes", "==", otypes)
-        SBC = SIMBADChecker(conditional_arg)
-
-        if (FOV is None and radius is None):
-            FOV = 120
-            SBC.getQuery(coords, args, FOV=FOV, radius=radius)
-            result = SBC.checkQuery()
-
-            if (plot):
-                SBC.plotEntries(coords, result, FOV=FOV, separation=separation)
+        if (search_type == "Box" or search_type == "Box Search"):
+            search_parameters = {"Coordinates": coords, "Type": search_type, "FOV": FOV}
+        elif (search_type == "Cone" or search_type == "Cone Search"):
+            search_parameters = {"Coordinates": coords, "Type": search_type, "radius": radius}
         else:
-            SBC.getQuery(coords, args, FOV=FOV, radius=radius)
-            result = SBC.checkQuery()
-            if (plot):
-                SBC.plotEntries(coords, result, FOV=FOV, radius=radius, separation=separation)
+            raise ValueError(f"Invalid search type: {search_type}. Expected 'Cone', 'Cone Search', 'Box', or 'Box Search'.")
+
+        simbad_searcher = SimbadSearcher(search_parameters)
+        otypes_condition = simbad_searcher.buildConditionalArgument("OTYPES", "==", otypes)
+        result = simbad_searcher.getConditionalQuery(otypes_condition)
+
+        if(plot):
+            simbad_searcher.plotEntries(separation=separation)
 
         return result
 
-    def isInSIMBAD(self, subject_id):
+    def sourceExistsInSimbad(self, subject_id, search_type="Box Search", FOV=120*u.arcsec, radius=60*u.arcsec):
         """
-        Determines whether the subject is in SIMBAD.
+        Determines whether there is a source in Simbad within the provided search parameters of the subject.
 
         Parameters
         ----------
@@ -843,92 +805,73 @@ class Analyzer:
         Returns
         -------
         in_simbad : bool
-            Whether the subject is in SIMBAD.
+            Whether there is a source in Simbad within the provided search parameters of the subject.
         """
 
-        # Get the subject's metadata
-        simbad_link = self.getSIMBADLink(subject_id)
+        return len(self.getSimbadQuery(subject_id, search_type=search_type, FOV=FOV, radius=radius)) > 0
 
-        if(simbad_link is None):
-            print(f"No SIMBAD link found for subject {subject_id}, so it cannot be checked.")
-            return False
-
-        # Get RA and Dec from the SIMBAD link
-        RA, DEC = self.extract_coordinates_from_link(simbad_link)
-        coords = [RA, DEC]
-
-        # Get the radius from the SIMBAD link
-        radius = self.extract_radius_from_link(simbad_link)
-
-        FOV = math.sqrt(2) * radius
-
-        return SIMBADChecker.isInSIMBAD(coords, FOV=FOV)
-
-    def getGaiaQuery(self, subject_id, FOV=None, radius=None, separation=None, plot=False):
+    def getGaiaQuery(self, subject_id, search_type="Box Search", FOV=120*u.arcsec, radius=60*u.arcsec, plot=False, separation=None):
         # Get the subject's metadata
         subject_metadata = self.getSubjectMetadata(subject_id)
         RA = subject_metadata["RA"]
         DEC = subject_metadata["DEC"]
         coords = [RA, DEC]
 
-        if(FOV is None and radius is None):
-            simbad_link = self.getSIMBADLink(subject_id)
-            radius = self.extract_radius_from_link(simbad_link)
-            FOV = math.sqrt(2) * radius
-            GC = GaiaChecker(separation=None)
-            result = GC.getQuery(coords, FOV=FOV)
-            if(plot):
-                GC.plotEntries(coords, result, FOV=FOV, separation=separation)
+        if (search_type == "Box" or search_type == "Box Search"):
+            search_parameters = {"Coordinates": coords, "Type": search_type, "FOV": FOV}
+        elif (search_type == "Cone" or search_type == "Cone Search"):
+            search_parameters = {"Coordinates": coords, "Type": search_type, "radius": radius}
         else:
-            GC = GaiaChecker(separation=np.inf)
-            result = GC.getQuery(coords, FOV=FOV, radius=radius)
-            if(plot):
-                GC.plotEntries(coords, result, FOV=FOV, radius=radius, separation=separation)
+            raise ValueError(f"Invalid search type: {search_type}. Expected 'Cone', 'Cone Search', 'Box', or 'Box Search'.")
+
+        gaia_searcher = GaiaSearcher(search_parameters)
+
+        result = gaia_searcher.getQuery()
+
+        if (plot):
+            gaia_searcher.plotEntries(separation=separation)
+
         return result
 
-    def checkGaiaQuery(self, subject_id, separation, FOV=None, radius=None, plot=False):
-        # Get the subject's metadata
+    def getConditionalGaiaQuery(self, subject_id, search_type="Box Search", FOV=120*u.arcsec, radius=60*u.arcsec, gaia_pm=100 * u.mas / u.yr, plot=False, separation=None):
         subject_metadata = self.getSubjectMetadata(subject_id)
         RA = subject_metadata["RA"]
         DEC = subject_metadata["DEC"]
         coords = [RA, DEC]
 
-        GC = GaiaChecker(separation)
-        GC.getQuery(coords, FOV=FOV, radius=radius)
-        result = GC.checkQuery()
+        if (search_type == "Box" or search_type == "Box Search"):
+            search_parameters = {"Coordinates": coords, "Type": search_type, "FOV": FOV}
+        elif (search_type == "Cone" or search_type == "Cone Search"):
+            search_parameters = {"Coordinates": coords, "Type": search_type, "radius": radius}
+        else:
+            raise ValueError(
+                f"Invalid search type: {search_type}. Expected 'Cone', 'Cone Search', 'Box', or 'Box Search'.")
 
-        if(plot):
-            GC.plotEntries(coords, result, FOV=FOV, radius=radius, separation=separation)
+        gaia_searcher = GaiaSearcher(search_parameters)
+        proper_motion_condition = gaia_searcher.buildConditionalArgument("pm", ">=", gaia_pm)
+        result = gaia_searcher.getConditionalQuery(proper_motion_condition)
+
+        if (plot):
+            gaia_searcher.plotEntries(separation=separation)
 
         return result
 
-    def isInGaia(self, subject_id):
+    def sourceExistsInGaia(self, subject_id, search_type="Box Search", FOV=120*u.arcsec, radius=60*u.arcsec):
         """
-        Determines whether the subject is in Gaia.
+        Determines whether there is a source in Gaia within the provided search parameters of the subject.
 
         Parameters
         ----------
         subject_id : str, int
-            The ID of the subject to check.
+            The ID of the subject to check around.
 
         Returns
         -------
         in_gaia : bool
-            Whether or not the subject is in Gaia.
+            Whether there is a source in Gaia within the provided search parameters of the subject.
         """
 
-        # Get the subject's metadata
-        subject_metadata = self.getSubjectMetadata(subject_id)
-        RA = subject_metadata["RA"]
-        DEC = subject_metadata["DEC"]
-        coords = [RA, DEC]
-
-        simbad_link = self.getSIMBADLink(subject_id)
-        radius = self.extract_radius_from_link(simbad_link)
-
-        FOV = math.sqrt(2) * radius
-
-        return GaiaChecker.isInGaia(coords, FOV=FOV)
+        return len(self.getGaiaQuery(subject_id, search_type=search_type, FOV=FOV, radius=radius)) > 0
 
     def subjectExists(self, subject_id):
         """
@@ -1020,19 +963,9 @@ class Analyzer:
         in_known_databases : bool
             Whether the subject's FOV search area has any known objects in it.
         """
+        FOV = 120 * u.arcsec
 
-        # Get the subject's metadata
-        subject_metadata = self.getSubjectMetadata(subject_id)
-        RA = subject_metadata["RA"]
-        DEC = subject_metadata["DEC"]
-        coords = [RA, DEC]
-
-        simbad_link = self.getSIMBADLink(subject_id)
-        radius = self.extract_radius_from_link(simbad_link)
-
-        FOV = math.sqrt(2) * radius
-
-        database_check_dict = {"SIMBAD": SIMBADChecker.isInSIMBAD(coords, FOV=FOV), "Gaia": GaiaChecker.isInGaia(coords, FOV=FOV)}
+        database_check_dict = {"Simbad": self.sourceExistsInSimbad(subject_id, search_type="Box Search", FOV=FOV), "Gaia": self.sourceExistsInGaia(subject_id, search_type="Box Search", FOV=FOV)}
 
         # For each database, check if the subject's FOV search area has any known objects in it
         if(any(database_check_dict.values())):
@@ -1040,10 +973,10 @@ class Analyzer:
         else:
             return False, database_check_dict
 
-    def checkSubjectFieldOfView(self, subject_id, gaia_separation=None):
+    def checkSubjectFieldOfView(self, subject_id, otypes=["BD*", "BD?", "BrownD*", "BrownD?", "BrownD*_Candidate", "PM*"], gaia_pm=100 * u.mas / u.yr):
         """
         Determines whether the subject's FOV search area has any known objects in it given the distance threshold
-        and default otype conditions.
+        and default otypes conditions.
 
         Parameters
         ----------
@@ -1056,8 +989,8 @@ class Analyzer:
             Whether the subject's FOV search area has any known objects in it.
         """
 
-        simbad_query = self.checkSIMBADQuery(subject_id, FOV=120)
-        gaia_query = self.checkGaiaQuery(subject_id, FOV=120, separation=gaia_separation)
+        simbad_query = self.getConditionalSimbadQuery(subject_id, search_type="Box Search", FOV=120*u.arcsec, otypes=otypes)
+        gaia_query = self.getConditionalGaiaQuery(subject_id, search_type="Box Search", FOV=120*u.arcsec, gaia_pm=gaia_pm)
 
         database_query_dict = {"SIMBAD": simbad_query, "Gaia": gaia_query}
         database_check_dict = {}
@@ -1066,7 +999,7 @@ class Analyzer:
             if(query is None):
                 database_check_dict[database] = False
             else:
-                database_check_dict[database] = not query.empty
+                database_check_dict[database] = len(query) > 0
 
         return database_check_dict, database_query_dict
 

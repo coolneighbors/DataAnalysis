@@ -1,7 +1,6 @@
 import os.path
 from time import sleep
 
-import Checker
 from Analyzer import Analyzer
 from Classifier import Classifier
 
@@ -27,10 +26,9 @@ def checkAcceptableCandidates(accepted_subjects):
     not_in_gaia_subjects = []
     not_in_either_subjects = []
 
-    separation = 32
     for index, subject_id in enumerate(accepted_subjects):
         print("Checking subject " + str(subject_id) + f" ({index + 1} out of {len(accepted_subjects)})")
-        database_check_dict, database_query_dict = analyzer.checkSubjectFieldOfView(subject_id, gaia_separation=separation)
+        database_check_dict, database_query_dict = analyzer.checkSubjectFieldOfView(subject_id)
         no_database = not any(database_check_dict.values())
         if (no_database):
             print(f"Subject {subject_id} is not in either database.")
@@ -70,12 +68,12 @@ def checkAcceptableCandidates(accepted_subjects):
 def runAcceptableCandidateCheck():
     if (os.path.exists("acceptable_candidates.csv")):
         print("Found acceptable candidates file.")
-        acceptable_candidates = analyzer.loadSubjectDataframe("acceptable_candidates.csv")
+        acceptable_candidates_dataframe = analyzer.loadSubjectDataframe("acceptable_candidates.csv")
+        acceptable_candidates = acceptable_candidates_dataframe["subject_id"].values
     else:
         print("No acceptable candidates file found. Generating new one.")
         acceptable_candidates = findAcceptableCandidates(acceptance_ratio=0.5)
-        acceptable_candidates_dataframe = analyzer.combineSubjectDataframes(
-            analyzer.getSubjectDataframe(acceptable_candidates))
+        acceptable_candidates_dataframe = analyzer.combineSubjectDataframes(analyzer.getSubjectDataframe(acceptable_candidates))
         Analyzer.saveSubjectDataframe(acceptable_candidates_dataframe, "acceptable_candidates.csv")
 
     generated_files = checkAcceptableCandidates(acceptable_candidates)
@@ -95,4 +93,4 @@ subject_file = "backyard-worlds-cool-neighbors-subjects.csv"
 analyzer = Analyzer(extracted_file, reduced_file, subject_file)
 
 if (__name__ == "__main__"):
-    plotTopUsers(percentile=98, title=f"Users in the Top 2% of Classifications: Day 4")
+    runAcceptableCandidateCheck()
