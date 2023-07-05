@@ -3,6 +3,7 @@ from time import sleep
 
 from Analyzer import Analyzer
 from Classifier import Classifier
+import astropy.units as u
 
 def runClassifier():
     classifier = Classifier("backyard-worlds-cool-neighbors-classifications.csv", "backyard-worlds-cool-neighbors-workflows.csv")
@@ -79,6 +80,31 @@ def runAcceptableCandidateCheck():
     generated_files = checkAcceptableCandidates(acceptable_candidates)
     print("Generated files: " + str(generated_files))
 
+def plotSubjects(subject_csv):
+    subject_dataframe = Analyzer.loadSubjectDataframe(subject_csv)
+    database_name = ""
+    if("Simbad" in subject_csv):
+        database_name = "Simbad"
+    elif("Gaia" in subject_csv):
+        database_name = "Gaia"
+    elif("either" in subject_csv):
+        database_name = "not in either"
+
+    for subject_id in subject_dataframe["subject_id"]:
+        analyzer.showSubject(subject_id, True)
+        if(database_name == "Simbad"):
+            query = analyzer.getConditionalSimbadQuery(subject_id, FOV=120 * u.arcsec, separation=60 * u.arcsec, plot=True)
+        elif(database_name == "Gaia"):
+            query = analyzer.getConditionalGaiaQuery(subject_id, FOV=120 * u.arcsec, separation=60 * u.arcsec, plot=True)
+        elif(database_name == "not in either"):
+            query = analyzer.getConditionalSimbadQuery(subject_id, FOV=120 * u.arcsec, separation=60 * u.arcsec, plot=True)
+            print("Simbad", query)
+            query = analyzer.getConditionalGaiaQuery(subject_id, FOV=120 * u.arcsec, separation=60 * u.arcsec, plot=True)
+            print("Gaia", query)
+        else:
+            raise ValueError("Invalid database name.")
+        print(query)
+
 def plotClassificationDistribution(title="Classification Distribution: Day x"):
     total_subject_count = 27801
     analyzer.plotClassificationDistribution(total_subject_count=total_subject_count, title=title)
@@ -93,4 +119,5 @@ subject_file = "backyard-worlds-cool-neighbors-subjects.csv"
 analyzer = Analyzer(extracted_file, reduced_file, subject_file)
 
 if (__name__ == "__main__"):
-    runAcceptableCandidateCheck()
+    not_in_either_subjects = "not_in_either_subjects.csv"
+    plotSubjects(not_in_either_subjects)

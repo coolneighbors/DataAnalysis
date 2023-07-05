@@ -7,10 +7,11 @@ import astropy.coordinates
 import numpy as np
 import pandas
 from astropy import wcs
-from astropy.coordinates import SkyCoord, Angle
+from astropy.coordinates import SkyCoord, Angle, ICRS
 import astropy.units as u
 from astropy.io import fits
 from astropy.table import Table
+from astropy.time import Time
 from astropy.visualization import astropy_mpl_style
 from astropy.visualization.wcsaxes import SphericalCircle
 from astroquery.gaia import Gaia
@@ -40,6 +41,9 @@ class Searcher(ABC):
         self.result_dataframe = None
         self.decimal_coordinate_keys = {"RA": None, "DEC": None}
         self.source_name_key = {"Source Name": None}
+        self.default_equinox = None
+        self.default_epoch = None
+        self.default_frame = None
 
     @abstractmethod
     def getQuery(self, args):
@@ -76,7 +80,6 @@ class Searcher(ABC):
             boolean_list = self.checkCondition(modified_result_table, condition)
             modified_result_dataframe = modified_result_dataframe[boolean_list]
             modified_result_table = modified_result_table[boolean_list]
-
         self.result_table = modified_result_table
         self.result_dataframe = modified_result_dataframe
         return copy(self.result_table)
@@ -93,18 +96,6 @@ class Searcher(ABC):
 
         # Apply the conditions
         return self.applyQueryCriteria(conditions)
-
-    @staticmethod
-    def getParameterValue(parameter_name_variations, value_name_variations, input_dictionary):
-        # TODO: Add support for multiple parameter name variations and value name variations for a single type of parameter
-        # Ex: The Search type parameter can have two variations: "Box Search" and "Cone Search" which both have
-        # two variations on their names: "Box Search" and "Box" and "Cone Search" and "Cone" respectively.
-        # Each one of these variations should be able to be used to get the value, whatever name variation it may
-        # have for each subcase of the parameter.
-        # parameter_name_variations = [("Box Search", "Box"), ("Cone Search", "Cone")]
-        # value_name_variations = [["Box Search", "Box"], ["Cone Search", "Cone"]]
-        # input_dictionary = {"Type": "Box Search"}
-        raise NotImplementedError
 
     @staticmethod
     def applyUnit(value, unit):
@@ -159,12 +150,33 @@ class Searcher(ABC):
         # Get the search coordinates
         search_coordinates = search_parameters.get("Coordinates", None)
 
+        # Get the reference epoch of the search coordinates
+        search_coordinates_equinox = search_parameters.get("Equinox", None)
+        if(search_coordinates_equinox is not None):
+            search_coordinates_equinox = Time(search_coordinates_equinox, format="jyear")
+
+        search_coordinates_epoch = search_parameters.get("Epoch", None)
+        if(search_coordinates_epoch is not None):
+            search_coordinates_epoch = Time(search_coordinates_epoch, format="jyear")
+
+        search_coordinates_frame = search_parameters.get("Frame", None)
+
         if (search_coordinates is None):
             raise InputError(f"No search coordinates provided to {self.__class__.__name__}")
 
         # Check if the search coordinates are valid
         if (isinstance(search_coordinates, SkyCoord)):
+            if (search_coordinates_equinox is not None and search_coordinates.equinox != search_coordinates_equinox):
+                raise InputError(f"Invalid search coordinates provided to {self.__class__.__name__}: {search_coordinates} with equinox {search_coordinates.equinox} (should be {search_coordinates_equinox})")
+
+            if(search_coordinates_epoch is not None and search_coordinates.obstime != search_coordinates_epoch):
+                raise InputError(f"Invalid search coordinates provided to {self.__class__.__name__}: {search_coordinates} with epoch {search_coordinates.obstime} (should be {search_coordinates_epoch})")
+
+            if(search_coordinates_frame is not None and search_coordinates.frame.name != search_coordinates_frame):
+                raise InputError(f"Invalid search coordinates provided to {self.__class__.__name__}: {search_coordinates} with frame {search_coordinates.frame.name} (should be {search_coordinates_frame})")
+
             search_coordinates = search_coordinates.transform_to("icrs")
+
         elif(isinstance(search_coordinates, list) or isinstance(search_coordinates, tuple)):
             if(len(search_coordinates) != 2):
                 raise InputError(f"Invalid search coordinates provided to {self.__class__.__name__}: {search_coordinates} of length {len(search_coordinates)} (should be 2)")
@@ -172,7 +184,16 @@ class Searcher(ABC):
             ra_angle = self.applyUnit(search_coordinates[0], unit=u.deg)
             dec_angle = self.applyUnit(search_coordinates[1], unit=u.deg)
 
-            search_coordinates = SkyCoord(ra_angle, dec_angle, unit=u.deg, frame='icrs')
+            if(search_coordinates_equinox is None):
+                search_coordinates_equinox = Time(self.default_equinox, format="jyear")
+
+            if(search_coordinates_epoch is None):
+                search_coordinates_epoch = Time(self.default_epoch, format="jyear")
+
+            if(search_coordinates_frame is None):
+                search_coordinates_frame = self.default_frame
+
+            search_coordinates = SkyCoord(ra_angle, dec_angle, unit=u.deg, frame=search_coordinates_frame, obstime=search_coordinates_epoch, equinox=search_coordinates_equinox)
         else:
             raise InputError(f"Invalid search coordinates provided to {self.__class__.__name__}: {search_coordinates} of type {type(search_coordinates)}")
 
@@ -272,6 +293,7 @@ class Searcher(ABC):
                                                       inscribed_FOV_circle_vertices[:, 1].max())
 
         # Create a rectangle patch from the bounding box
+        # TODO: Implement Quadangle again
         world_fov_rectangle = Rectangle((inscribed_FOV_circle_bbox.xmin, inscribed_FOV_circle_bbox.ymin),
                                         inscribed_FOV_circle_bbox.width, inscribed_FOV_circle_bbox.height, **kwargs)
 
@@ -301,8 +323,6 @@ class Searcher(ABC):
         return ra_min, ra_max, dec_min, dec_max
 
     def plotEntries(self, **kwargs):
-        # TODO: Add way to add labels to the sources
-
         if (self.result_table is None):
             print("Cannot plot entries. Result table is None.")
             return None
@@ -659,6 +679,9 @@ class Searcher(ABC):
 
 class SimbadSearcher(Searcher):
     def __init__(self, search_parameters):
+        self.default_equinox = 2000.0
+        self.default_epoch = 2000.0
+        self.default_frame = "icrs"
         super().__init__(search_parameters=search_parameters)
         self.database_name = "Simbad"
         self.decimal_coordinate_keys = {"RA": "RA_d", "DEC": "DEC_d"}
@@ -685,6 +708,7 @@ class SimbadSearcher(Searcher):
 
             # Construct the region query and get the result table
             result_table = None
+
             try:
                 if (self.search_type == "Box" or self.search_type == "Box Search"):
                     # Get the ra and dec from the search coordinates
@@ -697,7 +721,6 @@ class SimbadSearcher(Searcher):
                         box_search_string = f"region(box, {ra} -{dec}, {FOV}s {FOV}s)"
                     else:
                         box_search_string = f"region(box, {ra} +{dec}, {FOV}s {FOV}s)"
-
                     result_table = simbad_query.query_criteria(box_search_string)
                 elif (self.search_type == "Cone" or self.search_type == "Cone Search"):
                     result_table = simbad_query.query_region(self.search_coordinates, radius=self.search_input)
@@ -755,12 +778,16 @@ class SimbadSearcher(Searcher):
 
 class GaiaSearcher(Searcher):
     def __init__(self, search_parameters):
+        self.data_release = search_parameters.get("data_release", "DR3")
+        self.data_release_keys = {"DR1": "gaiadr1", "DR2": "gaiadr2", "DR3": "gaiadr3"}
+        data_release_epochs_dict = {"DR1": 2015.0, "DR2": 2015.5, "DR3": 2016.0}
+        self.default_equinox = 2000.0
+        self.default_epoch = data_release_epochs_dict[self.data_release]
+        self.default_frame = "icrs"
         super().__init__(search_parameters=search_parameters)
         self.database_name = "Gaia"
         self.decimal_coordinate_keys = {"RA": "ra", "DEC": "dec"}
         self.source_name_key = {"Source Name": "DESIGNATION"}
-        self.data_release = search_parameters.get("data_release", "DR3")
-        self.data_release_keys = {"DR1": "gaiadr1", "DR2": "gaiadr2", "DR3": "gaiadr3"}
         Gaia.MAIN_GAIA_TABLE = f"{self.data_release_keys[self.data_release]}.gaia_source"
         Gaia.ROW_LIMIT = search_parameters.get("row_limit", 100)
 
@@ -769,8 +796,6 @@ class GaiaSearcher(Searcher):
         # Construct the region query and get the result table
         result_table = None
 
-        ra = self.search_coordinates.ra.deg
-        dec = self.search_coordinates.dec.deg
         query_wcs = self.createWCS(self.search_coordinates)
         try:
             if (self.search_type == "Box" or self.search_type == "Box Search"):
