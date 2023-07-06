@@ -9,17 +9,19 @@ def runClassifier():
     classifier = Classifier("backyard-worlds-cool-neighbors-classifications.csv", "backyard-worlds-cool-neighbors-workflows.csv")
     classifier.classifyWorkflow(workflow_id=24299, v=1.6)
 
-def findAcceptableCandidates(acceptance_ratio):
+# TODO: Incorporate the following into the Analyzer class as necessary
+def findAcceptableCandidates(acceptance_ratio=None, acceptance_threshold=None):
     subject_ids = analyzer.getSubjectIDs()
     accepted_subjects = []
 
     for subject_id in subject_ids:
-        acceptable_boolean, subject_classifications_dict = analyzer.isAcceptableCandidate(subject_id, acceptance_ratio=acceptance_ratio)
+        acceptable_boolean, subject_classifications_dict = analyzer.isAcceptableCandidate(subject_id, acceptance_ratio=acceptance_ratio, acceptance_threshold=acceptance_threshold)
         if (acceptable_boolean):
             print("Subject " + str(subject_id) + f" is an acceptable candidate: {subject_classifications_dict}")
             accepted_subjects.append(subject_id)
 
-    print(f"Number of accepted subjects: {len(accepted_subjects)}")
+    acceptable_candidates_dataframe = analyzer.combineSubjectDataframes(analyzer.getSubjectDataframe(accepted_subjects))
+    Analyzer.saveSubjectDataframe(acceptable_candidates_dataframe, f"acceptable_candidates_acceptance_ratio_{acceptance_ratio}_acceptance_threshold_{acceptance_threshold}.csv")
     return accepted_subjects
 
 def checkAcceptableCandidates(accepted_subjects):
@@ -66,16 +68,16 @@ def checkAcceptableCandidates(accepted_subjects):
     generated_files = ["not_in_simbad_subjects.csv", "not_in_gaia_subjects.csv", "not_in_either_subjects.csv"]
     return generated_files
 
-def runAcceptableCandidateCheck():
-    if (os.path.exists("acceptable_candidates.csv")):
+def runAcceptableCandidateCheck(acceptable_candidates_csv = None):
+    if (acceptable_candidates_csv is not None and os.path.exists(acceptable_candidates_csv)):
         print("Found acceptable candidates file.")
-        acceptable_candidates_dataframe = analyzer.loadSubjectDataframe("acceptable_candidates.csv")
+        acceptable_candidates_dataframe = analyzer.loadSubjectDataframe(acceptable_candidates_csv)
         acceptable_candidates = acceptable_candidates_dataframe["subject_id"].values
-    else:
+    elif(acceptable_candidates_csv is None):
         print("No acceptable candidates file found. Generating new one.")
-        acceptable_candidates = findAcceptableCandidates(acceptance_ratio=0.5)
-        acceptable_candidates_dataframe = analyzer.combineSubjectDataframes(analyzer.getSubjectDataframe(acceptable_candidates))
-        Analyzer.saveSubjectDataframe(acceptable_candidates_dataframe, "acceptable_candidates.csv")
+        acceptable_candidates = findAcceptableCandidates(acceptance_ratio=0.5, acceptance_threshold=4)
+    elif(not os.path.exists(acceptable_candidates_csv)):
+        raise FileNotFoundError(f"Cannot find acceptable candidates file: {acceptable_candidates_csv}")
 
     generated_files = checkAcceptableCandidates(acceptable_candidates)
     print("Generated files: " + str(generated_files))
@@ -119,5 +121,10 @@ subject_file = "backyard-worlds-cool-neighbors-subjects.csv"
 analyzer = Analyzer(extracted_file, reduced_file, subject_file)
 
 if (__name__ == "__main__"):
-    not_in_either_subjects = "not_in_either_subjects.csv"
-    plotSubjects(not_in_either_subjects)
+    #findAcceptableCandidates(acceptance_ratio=0.5, acceptance_threshold=4)
+    #runAcceptableCandidateCheck(acceptable_candidates_csv="acceptable_candidates_acceptance_ratio_0.5_acceptance_threshold_4.csv")
+    query = analyzer.getSimbadQuery(89459160, FOV=120 * u.arcsec, separation=60 * u.arcsec, plot=True)
+    #plotTopUsers(percentile=98, title="Top 2% of Users: Day 8")
+    #analyzer.plotUserClassificationTimeHistogram("ConC")
+    #analyzer.plotUserClassificationTimeHistogram("Rattus")
+    #analyzer.plotUserClassificationTimeHistogram("pga99")

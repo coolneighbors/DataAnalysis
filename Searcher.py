@@ -21,6 +21,7 @@ from matplotlib.patches import Rectangle
 from matplotlib.transforms import Bbox
 import mplcursors
 
+# TODO: Add documentation for Searcher classes
 
 # Create an InputError exception class with a message
 class InputError(Exception):

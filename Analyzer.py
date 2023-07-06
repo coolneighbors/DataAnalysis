@@ -16,10 +16,13 @@ import astropy.units as u
 from astropy.time import Time
 from astroquery.simbad import Simbad
 import functools
+
+from scipy import stats
 from unWISE_verse.Spout import Spout
 from Searcher import SimbadSearcher, GaiaSearcher
 from Plotter import SubjectCSVPlotter
 
+# TODO: Redo documentation for Analyzer class
 
 class Analyzer:
     def __init__(self, extracted_file, reduced_file, subjects_file=None, save_login=True):
@@ -425,14 +428,15 @@ class Analyzer:
         plt.legend([f"{yes_count} classifications", f"{no_count} classifications"])
         plt.show()
 
-    def computeAverageTimePerClassification(self):
+    # TODO: Rewrite these classification time methods to use a single method which takes in a list of usernames and returns a list of classification times/stats
+    def computeClassificationTimeStatistics(self):
         """
-        Computes the average time between classifications for all users.
+        Computes statistics about the time taken to make classifications.
 
         Returns
         -------
         users_average_time : float
-            The average time between classifications for all users.
+            The average time taken to make a classification.
 
         Notes
         -----
@@ -470,24 +474,64 @@ class Analyzer:
 
                     # If the time difference is less than the upper time limit, then add it to the list of classification times
                     if(time_difference.seconds < upper_time_limit):
-                        users_classification_times.append(time_difference.seconds
-                                                          )
+                        users_classification_times.append(time_difference.seconds)
                 # Set the previous index to the current index
                 previous_index = index
 
         # Compute the average time between classifications for all users
         users_average_time = sum(users_classification_times) / len(users_classification_times)
 
-        # Return the average time between classifications for all users
-        return users_average_time
+        users_std_time = np.std(users_classification_times)
 
-    def classificationTimeHistogram(self):
+        median_time = np.median(users_classification_times)
+
+        # Return the average time between classifications for all users
+        return users_average_time, users_std_time, median_time
+
+    def computeUserClassificationTimeStatistics(self, user_name):
+        # Get the user's classifications
+        user_classifications = self.getUserClassifications(user_name)
+
+        user_classification_times = []
+
+        # Convert the created_at column to datetime objects
+        user_times = pd.to_datetime(user_classifications["created_at"])
+
+        # Initialize the previous index
+        previous_index = None
+
+        # Iterate over all indices in the user's classifications
+        for index in user_times.index:
+            # If there is a previous index, then compute the time difference
+            if (previous_index is not None):
+                # Compute the time difference between the current and previous classification
+                time_difference = user_times[index] - user_times[previous_index]
+
+                # Set the upper time limit to 5 minutes
+                upper_time_limit = 60 * 5
+
+                # If the time difference is less than the upper time limit, then add it to the list of classification times
+                if (time_difference.seconds < upper_time_limit):
+                    user_classification_times.append(time_difference.seconds)
+            # Set the previous index to the current index
+            previous_index = index
+
+        # Compute the average time between classifications for the user
+        user_average_time = sum(user_classification_times) / len(user_classification_times)
+
+        user_std_time = np.std(user_classification_times)
+
+        median_time = np.median(user_classification_times)
+
+        # Return the average time between classifications for all users
+        return user_average_time, user_std_time, median_time
+    def plotClassificationTimeHistogram(self, bins=100):
         """
-        Plots a histogram of the time between classifications for all users.
+        Plots a histogram of the classification times for all users.
 
         Notes
         -----
-        This method is useful for visualizing the time between classifications for all users.
+        This method is useful for visualizing the time taken to make classifications for all users.
         There is an upper time limit of 5 minutes between classifications when computing the histogram.
         """
 
@@ -515,21 +559,98 @@ class Analyzer:
                     # Compute the time difference between the current and previous classification
                     time_difference = user_times[index] - user_times[previous_index]
 
+                    # Set the lower time limit to 0 seconds
+                    lower_time_limit = 0
+
                     # Set the upper time limit to 5 minutes
                     upper_time_limit = 60*5
 
                     # If the time difference is less than the upper time limit, then add it to the list of classification times
-                    if(time_difference.seconds < upper_time_limit):
+                    if(time_difference.seconds > lower_time_limit and time_difference.seconds < upper_time_limit):
                         users_classification_times.append(time_difference.seconds)
 
                 # Set the previous index to the current index
                 previous_index = index
 
         # Plot the histogram
-        plt.hist(users_classification_times)
+        plt.hist(users_classification_times, bins=bins)
+
+        users_average_time = sum(users_classification_times) / len(users_classification_times)
+        plt.axvline(users_average_time, color='red', linestyle='solid', linewidth=1, label="Average Time: " + str(round(users_average_time, 2)) + " seconds")
+
+        user_std_time = np.std(users_classification_times)
+        plt.axvline(users_average_time + user_std_time, color='red', linestyle='dashed', linewidth=1, label="Standard Deviation: " + str(round(user_std_time, 2)) + " seconds")
+        plt.axvline(users_average_time - user_std_time, color='red', linestyle='dashed', linewidth=1)
+
+        median_time = np.median(users_classification_times)
+        plt.axvline(median_time, color='orange', linestyle='solid', linewidth=1, label="Median: " + str(median_time) + " seconds")
+
         plt.title("Classification Time Histogram")
         plt.xlabel("Time (seconds)")
-        plt.ylabel("Count")
+        plt.ylabel("Counts")
+        plt.legend()
+        plt.show()
+
+    def plotUserClassificationTimeHistogram(self, user_name, bins=100):
+        """
+        Plots a histogram of the classification times for a user.
+
+        Notes
+        -----
+        This method is useful for visualizing the time taken to make classifications for a user.
+        There is an upper time limit of 5 minutes between classifications when computing the histogram.
+        """
+
+        # Initialize the list of classification times
+        user_classification_times = []
+
+        # Iterate over all unique usernames
+        # Get the user's classifications
+        user_classifications = self.getUserClassifications(user_name)
+
+        # Convert the created_at column to datetime objects
+        user_times = pd.to_datetime(user_classifications["created_at"])
+
+        # Initialize the previous index
+        previous_index = None
+
+        # Iterate over all indices in the user's classifications
+        for index in user_times.index:
+            # If there is a previous index, then compute the time difference
+            if (previous_index is not None):
+                # Compute the time difference between the current and previous classification
+                time_difference = user_times[index] - user_times[previous_index]
+
+                # Set the lower time limit to 0 seconds
+                lower_time_limit = 0
+
+                # Set the upper time limit to 5 minutes
+                upper_time_limit = 60 * 5
+
+                # If the time difference is less than the upper time limit, then add it to the list of classification times
+                if (time_difference.seconds > lower_time_limit and time_difference.seconds < upper_time_limit):
+                    user_classification_times.append(time_difference.seconds)
+
+            # Set the previous index to the current index
+            previous_index = index
+
+        # Plot the histogram
+        plt.hist(user_classification_times, bins=bins)
+
+        users_average_time = sum(user_classification_times) / len(user_classification_times)
+        plt.axvline(users_average_time, color='red', linestyle='solid', linewidth=1, label="Average Time: " + str(round(users_average_time, 2)) + " seconds")
+
+        user_std_time = np.std(user_classification_times)
+        plt.axvline(users_average_time + user_std_time, color='red', linestyle='dashed', linewidth=1, label="Standard Deviation: " + str(round(user_std_time, 2)) + " seconds")
+        plt.axvline(users_average_time - user_std_time, color='red', linestyle='dashed', linewidth=1)
+
+        median_time = np.median(user_classification_times)
+        plt.axvline(median_time, color='orange', linestyle='solid', linewidth=1, label="Median: " + str(median_time) + " seconds")
+
+        plt.title(f"{user_name} Classification Time Histogram")
+        plt.xlabel("Time (seconds)")
+        plt.ylabel("Counts")
+        plt.legend()
         plt.show()
 
     def classificationTimeline(self, bar=True, binning_parameter = "Day", **kwargs):
@@ -955,7 +1076,7 @@ class Analyzer:
 
         return bitmask_type
 
-    def isAcceptableCandidate(self, subject_id, acceptance_ratio):
+    def isAcceptableCandidate(self, subject_id, acceptance_ratio=None, acceptance_threshold=0):
         subject_type = self.getSubjectType(subject_id)
         subject_classifications = self.getSubjectClassifications(subject_id)
 
@@ -965,7 +1086,7 @@ class Analyzer:
         non_movement_ratio = subject_classifications["no"] / total_classifications
 
         if (subject_type == "SMDET Candidate"):
-            return movement_ratio > acceptance_ratio, subject_classifications
+            return (movement_ratio > acceptance_ratio) and (subject_classifications["yes"] > acceptance_threshold), subject_classifications
         else:
             return False, subject_classifications
 
