@@ -1,9 +1,14 @@
 import datetime
+import functools
+import inspect
 import math
 import os
 import pickle
+import typing
 import warnings
 from copy import copy
+from io import TextIOWrapper
+from time import sleep
 
 import astropy
 import numpy as np
@@ -11,69 +16,174 @@ import pandas
 import pandas as pd
 import webbrowser
 import matplotlib.pyplot as plt
+import functools
 from astropy.coordinates import SkyCoord
 import astropy.units as u
 from astropy.time import Time
-from astroquery.simbad import Simbad
-import functools
-
-from scipy import stats
+from typing import List, Dict, Tuple, Union, Optional, TextIO, Any, Callable, Iterable, Set
 from unWISE_verse.Spout import Spout
 from Searcher import SimbadSearcher, GaiaSearcher
 from Plotter import SubjectCSVPlotter
+# TODO: Add a weighting system for users' classifications based on their accuracy on the known subjects
+# TODO: Redo documentation for Analyzer class and add type hints, result hints, and docstrings for all methods
+# TODO: Check hashed IP's to see if they're the same user as a logged-in user for classification counts, etc.
+# TODO: Investigate Gini_coefficient for classification distribution analysis (As suggested by Marc)
+from numpy import ndarray
 
-# TODO: Redo documentation for Analyzer class
+file_typing = Union[str, TextIOWrapper, TextIO]
+
+# Input typing for @uses_subject_ids decorator
+subjects_typing = Union[str, int, TextIOWrapper, TextIO, pd.DataFrame, Iterable[Union[str, int]]]
+
+# Processes subject_input into a list of integer subject_ids
+def uses_subject_ids(func):
+    @functools.wraps(func)
+    def conversion_wrapper(*args, **kwargs):
+        subject_ids = []
+        is_static_method = isinstance(func, staticmethod)
+        is_class_method = isinstance(func, classmethod)
+
+        if (is_static_method or is_class_method):
+            self = None
+            subject_input = args[0]
+            args = args[1:]
+        else:
+            self = args[0]
+            subject_input = args[1]
+            args = args[2:]
+
+        if (subject_input is None):
+            return None
+        elif ((isinstance(subject_input, str) and os.path.exists(subject_input)) or isinstance(subject_input, TextIOWrapper) or isinstance(subject_input, TextIO)):
+            subject_ids = pd.read_csv(Analyzer.verifyFile(subject_input, ".csv"), usecols=["subject_id"])["subject_id"].tolist()
+        elif(isinstance(subject_input, str) or isinstance(subject_input, int)):
+            try:
+                subject_ids = int(subject_input)
+            except ValueError:
+                raise ValueError("Invalid subject ID: " + str(subject_input))
+        elif (isinstance(subject_input, pd.DataFrame)):
+            subject_ids = subject_input["subject_id"].tolist()
+        elif (isinstance(subject_input, Iterable)):
+            for subject_id in subject_input:
+                try:
+                    subject_ids.append(int(subject_id))
+                except ValueError:
+                    raise ValueError("Invalid subject ID: " + str(subject_id))
+        else:
+            raise TypeError("Invalid subjects type: " + str(type(subject_input)))
+
+        if(self is None):
+            return func.__func__(subject_ids, *args, **kwargs)
+        else:
+            return func(self, subject_ids, *args, **kwargs)
+    return conversion_wrapper
+
+# Converts a function that takes in a single value and returns a single value into a function that takes in an iterable and returns a list of values
+def multioutput(func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        is_static_method = isinstance(func, staticmethod)
+        is_class_method = isinstance(func, classmethod)
+        if(is_static_method or is_class_method):
+            if(len(args) == 0):
+                raise TypeError("No arguments provided to {}.".format(func.__name__))
+            if(isinstance(args[0], Iterable) and not isinstance(args[0], str) and not isinstance(args[0], TextIOWrapper) and not isinstance(args[0], TextIO)):
+                iterable_type = type(args[0])
+                iterable_values = args[0]
+                args = args[1:]
+                return iterable_type([func.__func__(iterable_value, *args, **kwargs) for iterable_value in iterable_values])
+            else:
+                return func.__func__(*args, **kwargs)
+        else:
+            self = args[0]
+            args = args[1:]
+            if(len(args) == 0):
+                raise TypeError("No arguments provided to {}.".format(func.__name__))
+            if(isinstance(args[0], Iterable) and not isinstance(args[0], str) and not isinstance(args[0], TextIOWrapper) and not isinstance(args[0], TextIO)):
+                iterable_type = type(args[0])
+                iterable_values = args[0]
+                args = args[1:]
+                return iterable_type([func(self, iterable_value, *args, **kwargs) for iterable_value in iterable_values])
+            else:
+                return func(self, *args, **kwargs)
+    return wrapper
 
 class Analyzer:
-    def __init__(self, extracted_file, reduced_file, subjects_file=None, save_login=True):
-        """
-        Initializes an Analyzer object, which is used to analyze the extracted and reduced classifications from a
-        Zooniverse project.
+    def __init__(self, extracted_file: file_typing, reduced_file: file_typing, subjects_file: Optional[file_typing] = None, save_login: bool = True) -> None:
+        # Verify that the extracted_file is a valid file
+        self.extracted_file, self.reduced_file = Analyzer.verifyFile((extracted_file, reduced_file), required_file_type=".csv")
 
-        Parameters
-        ----------
-            extracted_file : str
-                The path to the extracted classifications file, generated by the Classifier class.
-            reduced_file : str
-                The path to the reduced classifications file, generated by the Classifier class.
-            save_login : bool
-                Whether to save the login information to a file, including Zooniverse IDs. Default is True.
-        Notes
-        -----
-        This class is used to analyze the extracted and reduced classifications from a Zooniverse project.
-        The extracted classifications file is a CSV file containing all of the classifications made by all users.
-        The reduced classifications file is a CSV file containing the reduced classifications for each subject.
-        """
-        
-        # Initialize variables
-        self.extracted_file = extracted_file
-        self.reduced_file = reduced_file
+        # Read the extracted and reduced files into Pandas DataFrames
         self.extracted_dataframe = pd.read_csv(self.extracted_file)
         self.reduced_dataframe = pd.read_csv(self.reduced_file)
 
+        # Verify that the subjects_file is a valid file, if provided.
         if (subjects_file is not None):
             self.subjects_file = subjects_file
             self.subjects_dataframe = pd.read_csv(self.subjects_file)
         else:
+            # If no subjects_file is provided, then the user must be logged in to access the subjects.
             self.subjects_file = None
             self.subjects_dataframe = None
             self.subject_set_id = None
             self.login(save_login)
 
-    def login(self, save=True):
+    @multioutput
+    @staticmethod
+    def verifyFile(file: file_typing, required_file_type: Optional[str] = None) -> str:
         """
-        Logs into Zooniverse using Spout and saves the login information and Zooniverse IDs each to a file.
+        Verifies that the file is a valid file.
+
+        Parameters
+        ----------
+        file : Union[str, TextIOWrapper]
+            The file to verify.
+        required_file_type : Optional[str]
+            The required file type of the file. If None, then the file type is not checked.
+
+        Returns
+        -------
+        file_path : str
+            The path to the file.
+
+        Raises
+        ------
+        TypeError
+            If the file is not a valid file input.
+        FileNotFoundError
+            If the file does not exist.
+        ValueError
+            If the file is not the required file type.
+
+        """
+
+        file_path = None
+
+        if (isinstance(file, str)):
+            file_path = file
+        elif (isinstance(file, TextIOWrapper)):
+            file_path = file.name
+            file.close()
+        else:
+            raise TypeError(f"File '{file}' is not a valid file input.")
+
+        if (not os.path.exists(file_path)):
+            raise FileNotFoundError(f"File '{file_path}' does not exist.")
+
+        if(required_file_type is not None):
+            if(not file_path.endswith(required_file_type)):
+                raise ValueError(f"File '{file_path}' is not a {required_file_type} file.")
+
+        return file_path
+
+    def login(self, save: bool = True) -> None:
+        """
+        Logs the user into the Zooniverse project and saves the login information to a file.
 
         Parameters
         ----------
         save : bool
-            Whether to save the login information to a file, including Zooniverse IDs. Default is True.
-
-        Notes
-        -----
-        This method is called by the __init__ method automatically. If you want to login to a different
-        Zooniverse account, delete the login.pickle file. If you want to login to the same account,
-        but with different Zooniverse IDs, delete the zooniverse_ids.pickle file.
+            Whether to save the login information to a file.
         """
 
         # Get login
@@ -86,14 +196,6 @@ class Analyzer:
         Spout(project_identifier=project_id, login=login, display_printouts=True)
 
     def getUniqueUsers(self, include_logged_out=True):
-        """
-        Provides a list of the usernames of all unique users who participated in classifications.
-
-        Returns
-        -------
-        unique_users : list, strings
-        """
-
         if(include_logged_out):
             return self.extracted_dataframe["user_name"].unique()
         else:
@@ -101,58 +203,23 @@ class Analyzer:
             logged_in_unique_users = [user for user in unique_users if "not-logged-in" not in user]
             return logged_in_unique_users
 
-    def getClassificationsCount(self):
-        """
-        Provides the total number of classifications in the extracted classifications file.
-
-        Returns
-        -------
-        count : int
-            The total number of classifications in the extracted classifications file.
-        """
-        
+    def getTotalClassifications(self):
         # Return the number of classifications
         return len(self.extracted_dataframe)
 
-    def getUserClassifications(self, user_id):
-        """
-        Provides a dataframe of all classifications made by a particular user.
-
-        Parameters
-        ----------
-        user_id : int, str
-            The user's Zooniverse ID or username.
-
-        Returns
-        -------
-        user_classifications : pandas.DataFrame
-            The extracted dataframe of all classifications made by that user.
-        """
+    @multioutput
+    def getUserClassifications(self, user_identifier):
         # Check if the user_id is a string or an integer
-        if(isinstance(user_id, str)):
+        if(isinstance(user_identifier, str)):
             # If it's a string, then it's a username
-            user_name = user_id
-            
-            return self.extracted_dataframe[self.extracted_dataframe["user_name"] == user_name]
+            username = user_identifier
+            return self.extracted_dataframe[self.extracted_dataframe["user_name"] == username]
         else:
             # If it's an integer, then it's a Zooniverse ID
-            return self.extracted_dataframe[self.extracted_dataframe["user_id"] == user_id]
+            return self.extracted_dataframe[self.extracted_dataframe["user_id"] == user_identifier]
 
+    @multioutput
     def getUserClassificationsCount(self, user_id):
-        """
-        Provides the total number of classifications made by a particular user.
-
-        Parameters
-        ----------
-        user_id : int, str
-            The user's Zooniverse ID or username.
-
-        Returns
-        -------
-        count : int
-            The total number of classifications made by that user.
-        """
-        
         # Return the number of classifications made by that user
         return len(self.getUserClassifications(user_id))
 
@@ -245,103 +312,96 @@ class Analyzer:
         plt.show()
 
     def getSubjectIDs(self):
-        """
-        Provides a list of all subject IDs in the reduced classifications file.
-
-        Returns
-        -------
-        subject_ids : list, strings
-            A list of all subject IDs in the reduced classifications file.
-
-        Notes
-        -----
-        This method is useful for iterating over all unique subjects.
-        This will not include duplicates, such as would be found in the extracted classifications file.
-        """
-        
         # Return the list of subject IDs
         return self.reduced_dataframe["subject_id"].values
 
-    def getSubjectDataframe(self, subject_id, type="default"):
-        """
-        Provides the reduced dataframe of the classifications made for a particular subject.
+    @uses_subject_ids
+    @multioutput
+    def getSubjectDataframe(self, subject_input: subjects_typing, dataframe_type: str = "default") -> pd.DataFrame:
 
-        Parameters
-        ----------
-        subject_id : str or int, or list of str or int, or tuple of str or int
-            The subject's Zooniverse ID.
-        type : str, optional
-            The type of dataframe to return. Can be either "reduced", "extracted", or default.
-            Default is taken from the subject's metadata.
+        def getSubjectDataframeFromID(subject_id: int, dataframe_type: str = "default") -> pd.DataFrame:
 
-        Returns
-        -------
-        subject_dataframe : pandas.DataFrame or list of pandas.DataFrame
-            The dataframe(s) for that subject or subjects.
-        """
+            if(not isinstance(subject_id, int)):
+                raise ValueError("The subject_id must be an integer.")
 
-        if(isinstance(subject_id, list) or isinstance(subject_id, tuple)):
-            # If the subject_id is a list or tuple, then return a list of dataframes
-            subject_dataframes = []
-            for id in subject_id:
-                subject_dataframes.append(self.getSubjectDataframe(id, type=type))
-            return subject_dataframes
+            if (dataframe_type == "default"):
+                # If default, then return the metadata of the subject as a dataframe
+                subject_metadata = self.getSubjectMetadata(subject_id)
 
-        if(type == "default"):
-            # If default, then return the metadata of the subject as a dataframe
-            subject_metadata = self.getSubjectMetadata(subject_id)
+                if(subject_metadata is None):
+                    warnings.warn(f"Subject {subject_id} does not exist, returning empty Dataframe.")
+                    return pd.DataFrame()
 
-            # Add the standard subject_id column
-            subject_metadata["subject_id"] = subject_id
+                # Add the standard subject_id column
+                subject_metadata["subject_id"] = subject_id
 
-            # Add the standard metadata column
-            subject_metadata["metadata"] = str(subject_metadata)
+                # Add the standard metadata column
+                subject_metadata["metadata"] = str(subject_metadata)
 
-            # Convert the metadata to a dataframe
-            subject_metadata_dataframe = pd.DataFrame.from_dict(subject_metadata, orient="index").transpose()
-            return subject_metadata_dataframe
+                # Convert the metadata to a dataframe
+                subject_metadata_dataframe = pd.DataFrame.from_dict(subject_metadata, orient="index").transpose()
+                return subject_metadata_dataframe
 
-        elif(type == "reduced"):
-            # If reduced, then return the reduced dataframe for that subject
-            return self.reduced_dataframe[self.reduced_dataframe["subject_id"] == int(subject_id)]
-        elif(type == "extracted"):
-            # If not reduced, then return the extracted dataframe for that subject
-            return self.extracted_dataframe[self.extracted_dataframe["subject_id"] == int(subject_id)]
+            elif (dataframe_type == "reduced"):
+                # If reduced, then return the reduced dataframe for that subject
+                return self.reduced_dataframe[self.reduced_dataframe["subject_id"] == subject_id]
+            elif (dataframe_type == "extracted"):
+                # If not reduced, then return the extracted dataframe for that subject
+                return self.extracted_dataframe[self.extracted_dataframe["subject_id"] == subject_id]
 
-    def getSubjectClassifications(self, subject_id):
-        """
-        Provides a dictionary of the number of "yes" and "no" classifications for a particular subject.
+        subject_dataframe = getSubjectDataframeFromID(subject_input, dataframe_type=dataframe_type)
 
-        Parameters
-        ----------
-        subject_id : str or int
-            The subject's Zooniverse ID.
+        # ignore warnings about setting values on a copy of a slice from a DataFrame
+        pd.options.mode.chained_assignment = None
+        subject_dataframe.drop_duplicates(subset=["subject_id"], inplace=True)
+        return subject_dataframe
 
-        Returns
-        -------
-        classification_dict : dict
-            A dictionary of the number of "yes" and "no" classifications for that subject.
-        """
+    def combineSubjectDataframes(self, subject_dataframes: Iterable[pd.DataFrame]) -> pd.DataFrame:
+        # Combine a list of subject dataframes into a single dataframe
+        if(not isinstance(subject_dataframes, Iterable)):
+            if(isinstance(subject_dataframes, pd.DataFrame)):
+                return subject_dataframes
+            else:
+                raise ValueError("The subject_dataframes must be a list of dataframes.")
 
+        subject_dataframe = pd.concat(subject_dataframes, ignore_index=True)
+        subject_dataframe.drop_duplicates(subset=["subject_id"], inplace=True)
+        subject_dataframe.reset_index(drop=True, inplace=True)
+        return subject_dataframe
+
+    @multioutput
+    @uses_subject_ids
+    def getSubjectClassifications(self, subject_input):
         # Get the subject's dataframe
-        subject_dataframe = self.getSubjectDataframe(subject_id, type="reduced")
+        subject_dataframes = self.getSubjectDataframe(subject_input, dataframe_type="reduced")
+        classification_dicts = []
 
-        try:
-            # Try to get the number of "yes" classifications
-            yes_count = int(subject_dataframe["data.yes"].values[0])
-        except ValueError:
-            # If there are no "yes" classifications, then set the count to 0
-            yes_count = 0
+        if(not isinstance(subject_dataframes, list)):
+            subject_dataframes = [subject_dataframes]
 
-        try:
-            # Try to get the number of "no" classifications
-            no_count = int(subject_dataframe["data.no"].values[0])
-        except ValueError:
-            # If there are no "no" classifications, then set the count to 0
-            no_count = 0
+        for subject_dataframe in subject_dataframes:
 
-        # Return the dictionary of the number of "yes" and "no" classifications
-        return {"yes": yes_count, "no": no_count}
+            try:
+                # Try to get the number of "yes" classifications
+                yes_count = int(subject_dataframe["data.yes"].values)
+            except ValueError:
+                # If there are no "yes" classifications, then set the count to 0
+                yes_count = 0
+
+            try:
+                # Try to get the number of "no" classifications
+                no_count = int(subject_dataframe["data.no"].values[0])
+            except ValueError:
+                # If there are no "no" classifications, then set the count to 0
+                no_count = 0
+
+            # Return the dictionary of the number of "yes" and "no" classifications
+            classification_dicts.append({"yes": yes_count, "no": no_count})
+
+        if(len(classification_dicts) == 1):
+            return classification_dicts[0]
+        else:
+            return classification_dicts
 
     def getClassificationCountDict(self, total_subject_count=None):
         subject_ids = self.getSubjectIDs()
@@ -393,19 +453,6 @@ class Analyzer:
         plt.show()
 
     def plotSubjectClassifications(self, subject_id):
-        """
-        Plots a pie chart of the number of "yes" and "no" classifications for a particular subject.
-
-        Parameters
-        ----------
-        subject_id : str or int
-            The subject's Zooniverse ID.
-
-        Notes
-        -----
-        This method is useful for visualizing the number of "yes" and "no" classifications for a particular subject.
-        In particular, this helps easily see whether a subject has been classified as a "yes" or "no" more often.
-        """
 
         # Get the number of "yes" and "no" classifications for that subject as a dictionary
         classification_dict = self.getSubjectClassifications(subject_id)
@@ -430,31 +477,18 @@ class Analyzer:
 
     # TODO: Rewrite these classification time methods to use a single method which takes in a list of usernames and returns a list of classification times/stats
     def computeClassificationTimeStatistics(self):
-        """
-        Computes statistics about the time taken to make classifications.
-
-        Returns
-        -------
-        users_average_time : float
-            The average time taken to make a classification.
-
-        Notes
-        -----
-        This method is useful for determining how long it typically takes users to make classifications.
-        There is an upper time limit of 5 minutes between classifications when computing the average time.
-        """
 
         # Get the unique usernames
-        user_names = self.getUniqueUsers()
+        usernames = self.getUniqueUsers()
 
         # Initialize the list of classification times
         users_classification_times = []
 
         # Iterate over all unique usernames
-        for user_name in user_names:
+        for username in usernames:
 
             # Get the user's classifications
-            user_classifications = self.getUserClassifications(user_name)
+            user_classifications = self.getUserClassifications(username)
 
             # Convert the created_at column to datetime objects
             user_times = pd.to_datetime(user_classifications["created_at"])
@@ -488,9 +522,10 @@ class Analyzer:
         # Return the average time between classifications for all users
         return users_average_time, users_std_time, median_time
 
-    def computeUserClassificationTimeStatistics(self, user_name):
+    @multioutput
+    def computeUserClassificationTimeStatistics(self, username):
         # Get the user's classifications
-        user_classifications = self.getUserClassifications(user_name)
+        user_classifications = self.getUserClassifications(username)
 
         user_classification_times = []
 
@@ -517,6 +552,10 @@ class Analyzer:
             previous_index = index
 
         # Compute the average time between classifications for the user
+
+
+        if(len(user_classification_times) == 0):
+            raise ValueError("User " + username + " has no classifications.")
         user_average_time = sum(user_classification_times) / len(user_classification_times)
 
         user_std_time = np.std(user_classification_times)
@@ -525,26 +564,19 @@ class Analyzer:
 
         # Return the average time between classifications for all users
         return user_average_time, user_std_time, median_time
-    def plotClassificationTimeHistogram(self, bins=100):
-        """
-        Plots a histogram of the classification times for all users.
 
-        Notes
-        -----
-        This method is useful for visualizing the time taken to make classifications for all users.
-        There is an upper time limit of 5 minutes between classifications when computing the histogram.
-        """
+    def plotClassificationTimeHistogram(self, bins=100):
 
         # Get the unique usernames
-        user_names = self.getUniqueUsers()
+        usernames = self.getUniqueUsers()
 
         # Initialize the list of classification times
         users_classification_times = []
 
         # Iterate over all unique usernames
-        for user_name in user_names:
+        for username in usernames:
             # Get the user's classifications
-            user_classifications = self.getUserClassifications(user_name)
+            user_classifications = self.getUserClassifications(username)
 
             # Convert the created_at column to datetime objects
             user_times = pd.to_datetime(user_classifications["created_at"])
@@ -591,22 +623,14 @@ class Analyzer:
         plt.legend()
         plt.show()
 
-    def plotUserClassificationTimeHistogram(self, user_name, bins=100):
-        """
-        Plots a histogram of the classification times for a user.
-
-        Notes
-        -----
-        This method is useful for visualizing the time taken to make classifications for a user.
-        There is an upper time limit of 5 minutes between classifications when computing the histogram.
-        """
+    def plotUserClassificationTimeHistogram(self, username, bins=100):
 
         # Initialize the list of classification times
         user_classification_times = []
 
         # Iterate over all unique usernames
         # Get the user's classifications
-        user_classifications = self.getUserClassifications(user_name)
+        user_classifications = self.getUserClassifications(username)
 
         # Convert the created_at column to datetime objects
         user_times = pd.to_datetime(user_classifications["created_at"])
@@ -647,30 +671,13 @@ class Analyzer:
         median_time = np.median(user_classification_times)
         plt.axvline(median_time, color='orange', linestyle='solid', linewidth=1, label="Median: " + str(median_time) + " seconds")
 
-        plt.title(f"{user_name} Classification Time Histogram")
+        plt.title(f"{username} Classification Time Histogram")
         plt.xlabel("Time (seconds)")
         plt.ylabel("Counts")
         plt.legend()
         plt.show()
 
     def classificationTimeline(self, bar=True, binning_parameter = "Day", **kwargs):
-        """
-        Plots a timeline of the classifications made for all subjects.
-
-        Parameters
-        ----------
-        bar : bool
-            Whether to plot the timeline as a bar graph. Default is True.
-        binning_parameter : str
-            The binning parameter for the timeline. Determines how the classifications
-            should be binned. Default is "Day".
-        **kwargs
-            Keyword arguments to be passed to the plotting function.
-
-        Notes
-        -----
-        This method is useful for visualizing the classifications made for all subjects over some period of time.
-        """
 
         # Get the classification datetimes
         classification_datetimes = pd.to_datetime(self.extracted_dataframe["created_at"])
@@ -720,48 +727,26 @@ class Analyzer:
         plt.ylabel("Count")
         plt.show()
 
-    def getSubject(self, subject_id):
-        """
-        Gets the subject with the given subject ID.
-        
-        Parameters
-        ----------
-        subject_id : str, int
-            The ID of the subject to get.
-        
-        Returns
-        -------
-        subject : panoptes_client.Subject
-            The subject with the given subject ID.
-        """
+    @multioutput
+    @uses_subject_ids
+    def getSubject(self, subject_input):
 
         # Get the subject with the given subject ID in the subject set with the given subject set ID
-        return Spout.get_subject(int(subject_id), self.subject_set_id)
+        return Spout.get_subject(subject_input, self.subject_set_id)
 
-    def getSubjectMetadata(self, subject_id):
-        """
-        Gets the metadata for the subject with the given subject ID.
-        
-        Parameters
-        ----------
-        subject_id : str, int
-            The ID of the subject to get the metadata from.
-        
-        Returns
-        -------
-        metadata : dict
-            The metadata for the subject with the given subject ID.
-        """
+    @uses_subject_ids
+    @multioutput
+    def getSubjectMetadata(self, subject_input):
 
         # Get the subject with the given subject ID
         if(self.subjects_file is not None):
-            subject_dataframe = self.subjects_dataframe[self.subjects_dataframe["subject_id"] == subject_id]
+            subject_dataframe = self.subjects_dataframe[self.subjects_dataframe["subject_id"] == subject_input]
             if(subject_dataframe.empty):
                 return None
             else:
-                return eval(self.subjects_dataframe[self.subjects_dataframe["subject_id"] == subject_id].iloc[0]["metadata"])
+                return eval(self.subjects_dataframe[self.subjects_dataframe["subject_id"] == subject_input].iloc[0]["metadata"])
         else:
-            subject = self.getSubject(subject_id)
+            subject = self.getSubject(subject_input)
 
             try:
                 # Get the subject's metadata
@@ -773,25 +758,12 @@ class Analyzer:
                 # If the subject could not be found, then return None
                 return None
 
-    def getSubjectMetadataField(self, subject_id, field_name):
-        """
-        Gets the metadata field with the given field name for the subject with the given subject ID.
-        
-        Parameters
-        ----------
-        subject_id : str, int
-            The ID of the subject to get the metadata field from.
-        field_name : str
-            The name of the metadata field to get.
-        
-        Returns
-        -------
-        field_value : str
-            The value of the metadata field with the given field name for the subject with the given subject ID.
-        """
+    @uses_subject_ids
+    @multioutput
+    def getSubjectMetadataField(self, subject_input, field_name):
 
         # Get the subject's metadata
-        subject_metadata = self.getSubjectMetadata(subject_id)
+        subject_metadata = self.getSubjectMetadata(subject_input)
 
         if(subject_metadata is None):
             return None
@@ -802,23 +774,9 @@ class Analyzer:
         # Return the metadata field value
         return field_value
 
+    @uses_subject_ids
+    @multioutput
     def showSubject(self, subject_id, open_in_browser=False):
-        """
-        Shows the subject with the given subject ID by opening the WiseView link in the default web browser
-        and by returning the WiseView link.
-        
-        Parameters
-        ----------
-        subject_id : str, int
-            The ID of the subject to show.
-        open_in_browser : bool
-            Whether to open the subject in the default web browser. Default is False.
-        
-        Returns
-        -------
-        subject : panoptes_client.Subject
-            The subject with the given subject ID.
-        """
 
         # Get the WiseView link for the subject with the given subject ID
         wise_view_link = self.getSubjectMetadataField(subject_id, "WISEVIEW")
@@ -839,24 +797,16 @@ class Analyzer:
         else:
             if(open_in_browser):
                 webbrowser.open(wise_view_link)
+                delay = 10
+                print(f"Opening WiseView link for subject {subject_id}.")
+                sleep(delay)
 
         # Return the WiseView link
         return wise_view_link
 
-    def getSIMBADLink(self, subject_id):
-        """
-        Gets the SIMBAD link for the subject with the given subject ID.
-
-        Parameters
-        ----------
-        subject_id : str, int
-            The ID of the subject to get the SIMBAD link for.
-
-        Returns
-        -------
-        simbad_link : str
-            The SIMBAD link for the subject with the given subject ID.
-        """
+    @uses_subject_ids
+    @multioutput
+    def getSimbadLink(self, subject_id):
 
         simbad_link = self.getSubjectMetadataField(subject_id, "SIMBAD")
 
@@ -870,8 +820,14 @@ class Analyzer:
 
         return simbad_link
 
+    @uses_subject_ids
+    @multioutput
     def getSimbadQuery(self, subject_id, search_type="Box Search", FOV=120*u.arcsec, radius=60*u.arcsec, plot=False, separation=None):
         subject_metadata = self.getSubjectMetadata(subject_id)
+
+        if(subject_metadata is None):
+            print(f"No metadata found for subject {subject_id}, so a SIMBAD query cannot be performed.")
+            return None
 
         RA = subject_metadata["RA"]
         DEC = subject_metadata["DEC"]
@@ -893,8 +849,15 @@ class Analyzer:
 
         return result
 
+    @uses_subject_ids
+    @multioutput
     def getConditionalSimbadQuery(self, subject_id, search_type="Box Search", FOV=120*u.arcsec, radius=60*u.arcsec, otypes=["BD*", "BD?", "BrownD*", "BrownD?", "BrownD*_Candidate", "PM*"], plot=False, separation=None):
         subject_metadata = self.getSubjectMetadata(subject_id)
+
+        if (subject_metadata is None):
+            print(f"No metadata found for subject {subject_id}, so a SIMBAD conditional query cannot be performed.")
+            return None
+
         RA = subject_metadata["RA"]
         DEC = subject_metadata["DEC"]
         coords = [RA, DEC]
@@ -925,26 +888,22 @@ class Analyzer:
 
         return result
 
+    @uses_subject_ids
+    @multioutput
     def sourceExistsInSimbad(self, subject_id, search_type="Box Search", FOV=120*u.arcsec, radius=60*u.arcsec):
-        """
-        Determines whether there is a source in Simbad within the provided search parameters of the subject.
-
-        Parameters
-        ----------
-        subject_id : str, int
-            The ID of the subject to check.
-
-        Returns
-        -------
-        in_simbad : bool
-            Whether there is a source in Simbad within the provided search parameters of the subject.
-        """
 
         return len(self.getSimbadQuery(subject_id, search_type=search_type, FOV=FOV, radius=radius)) > 0
 
+    @uses_subject_ids
+    @multioutput
     def getGaiaQuery(self, subject_id, search_type="Box Search", FOV=120*u.arcsec, radius=60*u.arcsec, plot=False, separation=None):
         # Get the subject's metadata
         subject_metadata = self.getSubjectMetadata(subject_id)
+
+        if (subject_metadata is None):
+            print(f"No metadata found for subject {subject_id}, so a Gaia query cannot be performed.")
+            return None
+
         RA = subject_metadata["RA"]
         DEC = subject_metadata["DEC"]
         coords = [RA, DEC]
@@ -965,8 +924,15 @@ class Analyzer:
 
         return result
 
+    @uses_subject_ids
+    @multioutput
     def getConditionalGaiaQuery(self, subject_id, search_type="Box Search", FOV=120*u.arcsec, radius=60*u.arcsec, gaia_pm=100 * u.mas / u.yr, plot=False, separation=None):
         subject_metadata = self.getSubjectMetadata(subject_id)
+
+        if (subject_metadata is None):
+            print(f"No metadata found for subject {subject_id}, so a Gaia conditional query cannot be performed.")
+            return None
+
         RA = subject_metadata["RA"]
         DEC = subject_metadata["DEC"]
         coords = [RA, DEC]
@@ -997,37 +963,15 @@ class Analyzer:
 
         return result
 
+    @uses_subject_ids
+    @multioutput
     def sourceExistsInGaia(self, subject_id, search_type="Box Search", FOV=120*u.arcsec, radius=60*u.arcsec):
-        """
-        Determines whether there is a source in Gaia within the provided search parameters of the subject.
-
-        Parameters
-        ----------
-        subject_id : str, int
-            The ID of the subject to check around.
-
-        Returns
-        -------
-        in_gaia : bool
-            Whether there is a source in Gaia within the provided search parameters of the subject.
-        """
 
         return len(self.getGaiaQuery(subject_id, search_type=search_type, FOV=FOV, radius=radius)) > 0
 
+    @uses_subject_ids
+    @multioutput
     def subjectExists(self, subject_id):
-        """
-        Determines whether the subject exists.
-
-        Parameters
-        ----------
-        subject_id : str, int
-            The ID of the subject to check.
-
-        Returns
-        -------
-        subject_exists : bool
-            Whether the subject exists.
-        """
 
         # Get the subject's metadata
         metadata = self.getSubjectMetadata(subject_id)
@@ -1035,21 +979,9 @@ class Analyzer:
         # Return whether the subject exists
         return metadata is not None
 
+    @multioutput
     @staticmethod
     def bitmaskToType(bitmask):
-        """
-        Converts a bitmask to a subject type.
-        
-        Parameters
-        ----------
-        bitmask : int, str
-            The bitmask value to convert to a subject type.
-        
-        Returns
-        -------
-        bitmask_type : str
-            The subject type associated with the bitmask value.
-        """
 
         # Convert the bitmask to an integer
         try:
@@ -1063,6 +995,8 @@ class Analyzer:
         # Return the bitmask type associated with the bitmask value
         return bitmask_dict.get(bitmask, None)
 
+    @uses_subject_ids
+    @multioutput
     def getSubjectType(self, subject_id):
         # Get the bitmask for the subject
         bitmask = self.getSubjectMetadataField(subject_id, "#BITMASK")
@@ -1076,6 +1010,8 @@ class Analyzer:
 
         return bitmask_type
 
+    @uses_subject_ids
+    @multioutput
     def isAcceptableCandidate(self, subject_id, acceptance_ratio=None, acceptance_threshold=0):
         subject_type = self.getSubjectType(subject_id)
         subject_classifications = self.getSubjectClassifications(subject_id)
@@ -1090,20 +1026,85 @@ class Analyzer:
         else:
             return False, subject_classifications
 
+    def findAcceptableCandidates(self, acceptance_ratio=None, acceptance_threshold=None, save=True):
+        subject_ids = self.getSubjectIDs()
+        accepted_subjects = []
+
+        for subject_id in subject_ids:
+            acceptable_boolean, subject_classifications_dict = self.isAcceptableCandidate(subject_id, acceptance_ratio=acceptance_ratio, acceptance_threshold=acceptance_threshold)
+            if (acceptable_boolean):
+                print("Subject " + str(subject_id) + f" is an acceptable candidate: {subject_classifications_dict}")
+                accepted_subjects.append(subject_id)
+
+        if(save):
+            acceptable_candidates_dataframe = self.combineSubjectDataframes(self.getSubjectDataframe(accepted_subjects))
+            Analyzer.saveSubjectDataframe(acceptable_candidates_dataframe, f"acceptable_candidates_acceptance_ratio_{acceptance_ratio}_acceptance_threshold_{acceptance_threshold}.csv")
+
+        return accepted_subjects
+
+    def checkAcceptableCandidates(self, accepted_subjects):
+        not_in_simbad_subjects = []
+        not_in_gaia_subjects = []
+        not_in_either_subjects = []
+
+        for index, subject_id in enumerate(accepted_subjects):
+            print("Checking subject " + str(subject_id) + f" ({index + 1} out of {len(accepted_subjects)})")
+            database_check_dict, database_query_dict = self.checkSubjectFieldOfView(subject_id)
+            no_database = not any(database_check_dict.values())
+            if (no_database):
+                print(f"Subject {subject_id} is not in either database.")
+                not_in_either_subjects.append(subject_id)
+                not_in_simbad_subjects.append(subject_id)
+                not_in_gaia_subjects.append(subject_id)
+            else:
+                for database_name, in_database in database_check_dict.items():
+                    if (not in_database):
+                        if (database_name == "SIMBAD"):
+                            print(f"Subject {subject_id} is not in SIMBAD.")
+                            not_in_simbad_subjects.append(subject_id)
+                        elif (database_name == "Gaia"):
+                            print(f"Subject {subject_id} is not in Gaia.")
+                            not_in_gaia_subjects.append(subject_id)
+                    else:
+                        if (database_name == "SIMBAD"):
+                            print(f"Subject {subject_id} is in SIMBAD.")
+                        elif (database_name == "Gaia"):
+                            print(f"Subject {subject_id} is in Gaia.")
+
+        not_in_simbad_subject_dataframes = self.getSubjectDataframe(not_in_simbad_subjects)
+        not_in_gaia_subject_dataframes = self.getSubjectDataframe(not_in_gaia_subjects)
+        not_in_either_subject_dataframes = self.getSubjectDataframe(not_in_either_subjects)
+
+        not_in_simbad_subjects_dataframe = self.combineSubjectDataframes(not_in_simbad_subject_dataframes)
+        not_in_gaia_subjects_dataframe = self.combineSubjectDataframes(not_in_gaia_subject_dataframes)
+        not_in_either_subjects_dataframe = self.combineSubjectDataframes(not_in_either_subject_dataframes)
+
+        self.saveSubjectDataframe(not_in_simbad_subjects_dataframe, "not_in_simbad_subjects.csv")
+        self.saveSubjectDataframe(not_in_gaia_subjects_dataframe, "not_in_gaia_subjects.csv")
+        self.saveSubjectDataframe(not_in_either_subjects_dataframe, "not_in_either_subjects.csv")
+
+        generated_files = ["not_in_simbad_subjects.csv", "not_in_gaia_subjects.csv", "not_in_either_subjects.csv"]
+        return generated_files
+
+    def runAcceptableCandidateCheck(self, acceptance_ratio=0.5, acceptance_threshold=4, acceptable_candidates_csv=None):
+        acceptable_candidates = []
+        if (acceptable_candidates_csv is not None and os.path.exists(acceptable_candidates_csv)):
+            print("Found acceptable candidates file.")
+            acceptable_candidates_dataframe = self.loadSubjectDataframe(acceptable_candidates_csv)
+            acceptable_candidates = acceptable_candidates_dataframe["subject_id"].values
+        elif (acceptable_candidates_csv is None):
+            print("No acceptable candidates file found. Generating new one.")
+            acceptable_candidates = self.findAcceptableCandidates(acceptance_ratio=acceptance_ratio, acceptance_threshold=acceptance_threshold)
+        elif (not os.path.exists(acceptable_candidates_csv)):
+            raise FileNotFoundError(f"Cannot find acceptable candidates file: {acceptable_candidates_csv}")
+
+        generated_files = self.checkAcceptableCandidates(acceptable_candidates)
+        print("Generated files: " + str(generated_files))
+
+    @uses_subject_ids
+    @multioutput
     def searchSubjectFieldOfView(self, subject_id):
-        """
-        Determines whether the subject's FOV search area has any known objects in it.
 
-        Parameters
-        ----------
-        subject_id : str, int
-            The ID of the subject to check.
-
-        Returns
-        -------
-        in_known_databases : bool
-            Whether the subject's FOV search area has any known objects in it.
-        """
         FOV = 120 * u.arcsec
 
         database_check_dict = {"Simbad": self.sourceExistsInSimbad(subject_id, search_type="Box Search", FOV=FOV), "Gaia": self.sourceExistsInGaia(subject_id, search_type="Box Search", FOV=FOV)}
@@ -1114,21 +1115,9 @@ class Analyzer:
         else:
             return False, database_check_dict
 
+    @uses_subject_ids
+    @multioutput
     def checkSubjectFieldOfView(self, subject_id, otypes=["BD*", "BD?", "BrownD*", "BrownD?", "BrownD*_Candidate", "PM*"], gaia_pm=100 * u.mas / u.yr):
-        """
-        Determines whether the subject's FOV search area has any known objects in it given the distance threshold
-        and default otypes conditions.
-
-        Parameters
-        ----------
-        subject_id : str, int
-            The ID of the subject to check.
-
-        Returns
-        -------
-        in_known_databases : bool
-            Whether the subject's FOV search area has any known objects in it.
-        """
 
         simbad_query = self.getConditionalSimbadQuery(subject_id, search_type="Box Search", FOV=120*u.arcsec, otypes=otypes)
         gaia_query = self.getConditionalGaiaQuery(subject_id, search_type="Box Search", FOV=120*u.arcsec, gaia_pm=gaia_pm)
@@ -1145,21 +1134,6 @@ class Analyzer:
         return database_check_dict, database_query_dict
 
     def determineAcceptanceCounts(self, acceptance_ratio):
-        """
-        Determines the acceptance count of each subject type.
-        
-        Returns
-        -------
-        success_count_dict : dict
-            A dictionary containing the acceptance count of each subject type,
-            if there is a known correct answer.
-
-        Notes
-        -----
-        The success count is the number of subjects of a given type that have been classified correctly.
-        This is only applicable to subjects that have a known correct answer, such as known brown dwarfs, quasars,
-        and random sky locations.
-        """
 
         # Get the subject IDs
         subject_ids = self.getSubjectIDs()
@@ -1209,64 +1183,13 @@ class Analyzer:
         return success_count_dict
 
     @staticmethod
-    def combineSubjectDataframes(subject_dataframe_list):
-        """
-        Combines a list of subject dataframes into a single subject dataframe.
-
-        Parameters
-        ----------
-        subject_dataframe_list : list
-            A list of subject dataframes to combine.
-
-        Returns
-        -------
-        combined_subject_dataframe : pandas.DataFrame
-            The combined subject dataframe.
-        """
-
-        if(len(subject_dataframe_list) == 0):
-            return pd.DataFrame()
-
-        # Combine the subject dataframes
-        combined_subject_dataframe = pd.concat(subject_dataframe_list, ignore_index=True)
-
-        # Drop any duplicate subjects
-        combined_subject_dataframe.drop_duplicates(subset=["subject_id"], inplace=True)
-
-        # Return the combined subject dataframe
-        return combined_subject_dataframe
-
-    @staticmethod
     def saveSubjectDataframe(subject_dataframe, filename):
-        """
-        Saves the subject dataframe to a CSV file.
-
-        Parameters
-        ----------
-        subject_dataframe : pandas.DataFrame
-            The subject dataframe to save.
-        filename : str
-            The name of the file to save the subject dataframe to.
-        """
 
         # Save the subject dataframe to a CSV file
         subject_dataframe.to_csv(filename, index=False)
 
     @staticmethod
     def loadSubjectDataframe(filename):
-        """
-        Loads the subject dataframe from a CSV file.
-
-        Parameters
-        ----------
-        filename : str
-            The name of the file to load the subject dataframe from.
-
-        Returns
-        -------
-        subject_dataframe : pandas.DataFrame
-            The subject dataframe loaded from the CSV file.
-        """
 
         # Load the subject dataframe from a CSV file
         subject_dataframe = pd.read_csv(filename)
@@ -1274,12 +1197,32 @@ class Analyzer:
         # Return the subject dataframe
         return subject_dataframe
 
-    @staticmethod
-    def plotSubjectDataframe(subject_dataframe):
-        # create a temporary csv file of the subject dataframe
+    @uses_subject_ids
+    def plotSubjectsSkyMap(self, subject_input: subjects_typing):
+        subject_dataframes = self.getSubjectDataframe(subject_input)
+        subject_dataframe = self.combineSubjectDataframes(subject_dataframes)
         subject_dataframe.to_csv("temp.csv", index=False)
         subject_csv_plotter = SubjectCSVPlotter("temp.csv")
         subject_csv_plotter.plot()
         os.remove("temp.csv")
+
+    @uses_subject_ids
+    def plotConditionalQueries(self, subject_input, database_name):
+        subject_dataframes = self.getSubjectDataframe(subject_input)
+        subject_dataframe = self.combineSubjectDataframes(subject_dataframes)
+
+        for subject_id in subject_dataframe["subject_id"]:
+            self.showSubject(subject_id, True)
+            if (database_name == "Simbad"):
+                query = self.getConditionalSimbadQuery(subject_id, FOV=120 * u.arcsec, separation=60 * u.arcsec, plot=True)
+            elif (database_name == "Gaia"):
+                query = self.getConditionalGaiaQuery(subject_id, FOV=120 * u.arcsec, separation=60 * u.arcsec, plot=True)
+            elif (database_name == "not in either"):
+                query = self.getConditionalSimbadQuery(subject_id, FOV=120 * u.arcsec, separation=60 * u.arcsec, plot=True)
+                print("Simbad: ", query)
+                query = self.getConditionalGaiaQuery(subject_id, FOV=120 * u.arcsec, separation=60 * u.arcsec, plot=True)
+                print("Gaia: ", query)
+            else:
+                raise ValueError("Invalid database name.")
 
 

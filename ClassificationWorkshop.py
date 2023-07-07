@@ -1,4 +1,6 @@
 import os.path
+import typing
+from io import TextIOWrapper
 from time import sleep
 
 from Analyzer import Analyzer
@@ -8,104 +10,6 @@ import astropy.units as u
 def runClassifier():
     classifier = Classifier("backyard-worlds-cool-neighbors-classifications.csv", "backyard-worlds-cool-neighbors-workflows.csv")
     classifier.classifyWorkflow(workflow_id=24299, v=1.6)
-
-# TODO: Incorporate the following into the Analyzer class as necessary
-def findAcceptableCandidates(acceptance_ratio=None, acceptance_threshold=None):
-    subject_ids = analyzer.getSubjectIDs()
-    accepted_subjects = []
-
-    for subject_id in subject_ids:
-        acceptable_boolean, subject_classifications_dict = analyzer.isAcceptableCandidate(subject_id, acceptance_ratio=acceptance_ratio, acceptance_threshold=acceptance_threshold)
-        if (acceptable_boolean):
-            print("Subject " + str(subject_id) + f" is an acceptable candidate: {subject_classifications_dict}")
-            accepted_subjects.append(subject_id)
-
-    acceptable_candidates_dataframe = analyzer.combineSubjectDataframes(analyzer.getSubjectDataframe(accepted_subjects))
-    Analyzer.saveSubjectDataframe(acceptable_candidates_dataframe, f"acceptable_candidates_acceptance_ratio_{acceptance_ratio}_acceptance_threshold_{acceptance_threshold}.csv")
-    return accepted_subjects
-
-def checkAcceptableCandidates(accepted_subjects):
-    not_in_simbad_subjects = []
-    not_in_gaia_subjects = []
-    not_in_either_subjects = []
-
-    for index, subject_id in enumerate(accepted_subjects):
-        print("Checking subject " + str(subject_id) + f" ({index + 1} out of {len(accepted_subjects)})")
-        database_check_dict, database_query_dict = analyzer.checkSubjectFieldOfView(subject_id)
-        no_database = not any(database_check_dict.values())
-        if (no_database):
-            print(f"Subject {subject_id} is not in either database.")
-            not_in_either_subjects.append(subject_id)
-            not_in_simbad_subjects.append(subject_id)
-            not_in_gaia_subjects.append(subject_id)
-        else:
-            for database_name, in_database in database_check_dict.items():
-                if (not in_database):
-                    if (database_name == "SIMBAD"):
-                        print(f"Subject {subject_id} is not in SIMBAD.")
-                        not_in_simbad_subjects.append(subject_id)
-                    elif (database_name == "Gaia"):
-                        print(f"Subject {subject_id} is not in Gaia.")
-                        not_in_gaia_subjects.append(subject_id)
-                else:
-                    if(database_name == "SIMBAD"):
-                        print(f"Subject {subject_id} is in SIMBAD.")
-                    elif(database_name == "Gaia"):
-                        print(f"Subject {subject_id} is in Gaia.")
-
-    not_in_simbad_subject_dataframes = analyzer.getSubjectDataframe(not_in_simbad_subjects)
-    not_in_gaia_subject_dataframes = analyzer.getSubjectDataframe(not_in_gaia_subjects)
-    not_in_either_subject_dataframes = analyzer.getSubjectDataframe(not_in_either_subjects)
-
-    not_in_simbad_subjects_dataframe = Analyzer.combineSubjectDataframes(not_in_simbad_subject_dataframes)
-    not_in_gaia_subjects_dataframe = Analyzer.combineSubjectDataframes(not_in_gaia_subject_dataframes)
-    not_in_either_subjects_dataframe = Analyzer.combineSubjectDataframes(not_in_either_subject_dataframes)
-
-    Analyzer.saveSubjectDataframe(not_in_simbad_subjects_dataframe, "not_in_simbad_subjects.csv")
-    Analyzer.saveSubjectDataframe(not_in_gaia_subjects_dataframe, "not_in_gaia_subjects.csv")
-    Analyzer.saveSubjectDataframe(not_in_either_subjects_dataframe, "not_in_either_subjects.csv")
-
-    generated_files = ["not_in_simbad_subjects.csv", "not_in_gaia_subjects.csv", "not_in_either_subjects.csv"]
-    return generated_files
-
-def runAcceptableCandidateCheck(acceptable_candidates_csv = None):
-    if (acceptable_candidates_csv is not None and os.path.exists(acceptable_candidates_csv)):
-        print("Found acceptable candidates file.")
-        acceptable_candidates_dataframe = analyzer.loadSubjectDataframe(acceptable_candidates_csv)
-        acceptable_candidates = acceptable_candidates_dataframe["subject_id"].values
-    elif(acceptable_candidates_csv is None):
-        print("No acceptable candidates file found. Generating new one.")
-        acceptable_candidates = findAcceptableCandidates(acceptance_ratio=0.5, acceptance_threshold=4)
-    elif(not os.path.exists(acceptable_candidates_csv)):
-        raise FileNotFoundError(f"Cannot find acceptable candidates file: {acceptable_candidates_csv}")
-
-    generated_files = checkAcceptableCandidates(acceptable_candidates)
-    print("Generated files: " + str(generated_files))
-
-def plotSubjects(subject_csv):
-    subject_dataframe = Analyzer.loadSubjectDataframe(subject_csv)
-    database_name = ""
-    if("Simbad" in subject_csv):
-        database_name = "Simbad"
-    elif("Gaia" in subject_csv):
-        database_name = "Gaia"
-    elif("either" in subject_csv):
-        database_name = "not in either"
-
-    for subject_id in subject_dataframe["subject_id"]:
-        analyzer.showSubject(subject_id, True)
-        if(database_name == "Simbad"):
-            query = analyzer.getConditionalSimbadQuery(subject_id, FOV=120 * u.arcsec, separation=60 * u.arcsec, plot=True)
-        elif(database_name == "Gaia"):
-            query = analyzer.getConditionalGaiaQuery(subject_id, FOV=120 * u.arcsec, separation=60 * u.arcsec, plot=True)
-        elif(database_name == "not in either"):
-            query = analyzer.getConditionalSimbadQuery(subject_id, FOV=120 * u.arcsec, separation=60 * u.arcsec, plot=True)
-            print("Simbad", query)
-            query = analyzer.getConditionalGaiaQuery(subject_id, FOV=120 * u.arcsec, separation=60 * u.arcsec, plot=True)
-            print("Gaia", query)
-        else:
-            raise ValueError("Invalid database name.")
-        print(query)
 
 def plotClassificationDistribution(title="Classification Distribution: Day x"):
     total_subject_count = 27801
@@ -121,10 +25,7 @@ subject_file = "backyard-worlds-cool-neighbors-subjects.csv"
 analyzer = Analyzer(extracted_file, reduced_file, subject_file)
 
 if (__name__ == "__main__"):
-    #findAcceptableCandidates(acceptance_ratio=0.5, acceptance_threshold=4)
-    #runAcceptableCandidateCheck(acceptable_candidates_csv="acceptable_candidates_acceptance_ratio_0.5_acceptance_threshold_4.csv")
-    query = analyzer.getSimbadQuery(89459160, FOV=120 * u.arcsec, separation=60 * u.arcsec, plot=True)
-    #plotTopUsers(percentile=98, title="Top 2% of Users: Day 8")
-    #analyzer.plotUserClassificationTimeHistogram("ConC")
-    #analyzer.plotUserClassificationTimeHistogram("Rattus")
-    #analyzer.plotUserClassificationTimeHistogram("pga99")
+    subjects = analyzer.plotConditionalQueries("testing.csv", database_name="Simbad")
+
+
+

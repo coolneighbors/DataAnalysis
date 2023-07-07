@@ -17,6 +17,8 @@ from astropy.visualization.wcsaxes import SphericalCircle
 from astroquery.gaia import Gaia
 from astroquery.simbad import Simbad
 from matplotlib import pyplot as plt
+from matplotlib.collections import PathCollection
+from matplotlib.lines import Line2D
 from matplotlib.patches import Rectangle
 from matplotlib.transforms import Bbox
 import mplcursors
@@ -411,8 +413,20 @@ class Searcher(ABC):
                 ax.text(self.result_table[ra_key][i], self.result_table[dec_key][i], self.result_table[name_key][i], transform=ax.get_transform('world'), fontsize=source_labels_size, ha='center')
         else:
             cursor = mplcursors.cursor(hover=True)
-            cursor.connect("add", lambda sel: sel.annotation.set_fontsize(source_labels_size))
-            cursor.connect("add", lambda sel: sel.annotation.set_text(self.result_table[name_key][sel.target.index]))
+
+            def is_source_point(sel):
+                return isinstance(sel.artist, PathCollection)
+
+            def add_source_annotation(sel):
+                if(is_source_point(sel)):
+                    sel.annotation.set_text(self.result_table[name_key][sel.target.index])
+                    sel.annotation.set_fontsize(source_labels_size)
+                    sel.annotation.set_bbox({"boxstyle": "round, pad=0.5", "edgecolor": "black", "facecolor": "white"})
+                else:
+                    sel.annotation.set_visible(False)
+
+            cursor.connect("add", lambda sel: add_source_annotation(sel))
+
         handles = []
         labels = []
 
