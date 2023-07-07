@@ -17,6 +17,9 @@ import pandas as pd
 import webbrowser
 import matplotlib.pyplot as plt
 import functools
+
+import panoptes_client
+import unWISE_verse
 from astropy.coordinates import SkyCoord
 import astropy.units as u
 from astropy.time import Time
@@ -25,8 +28,8 @@ from unWISE_verse.Spout import Spout
 from Searcher import SimbadSearcher, GaiaSearcher
 from Plotter import SubjectCSVPlotter
 # TODO: Add a weighting system for users' classifications based on their accuracy on the known subjects
-# TODO: Redo documentation for Analyzer class and add type hints, result hints, and docstrings for all methods
 # TODO: Check hashed IP's to see if they're the same user as a logged-in user for classification counts, etc.
+# TODO: Redo documentation for Analyzer class and add type hints, result hints, and docstrings for all methods
 # TODO: Investigate Gini_coefficient for classification distribution analysis (As suggested by Marc)
 from numpy import ndarray
 
@@ -36,24 +39,45 @@ file_typing = Union[str, TextIOWrapper, TextIO]
 subjects_typing = Union[str, int, TextIOWrapper, TextIO, pd.DataFrame, Iterable[Union[str, int]]]
 
 # Processes subject_input into a list of integer subject_ids
+# TODO: Investigate if this can be done better (find first arg which is a list?, keyword arg for input?)
+
+def multioutput(func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        for index, arg in enumerate(args):
+            if(isinstance(arg, Iterable) and not isinstance(arg, str) and not isinstance(arg, TextIOWrapper) and not isinstance(arg, TextIO)):
+                iterable_type = type(arg)
+
+                if(not isinstance(arg, list) and not isinstance(arg, tuple)):
+                    warnings.warn(f"Iterable argument {arg} of type '{iterable_type.__name__}' is not a list or tuple. Returning results as a list.")
+                    iterable_type = list
+
+                before_args = args[:index]
+                after_args = args[index + 1:]
+                return iterable_type([func(*before_args, iterable_argument, *after_args, **kwargs) for iterable_argument in arg])
+
+        return func(*args, **kwargs)
+    return wrapper
+
 def uses_subject_ids(func):
+    func = multioutput(func)
     @functools.wraps(func)
     def conversion_wrapper(*args, **kwargs):
         subject_ids = []
         is_static_method = isinstance(func, staticmethod)
         is_class_method = isinstance(func, classmethod)
-
-        if (is_static_method or is_class_method):
-            self = None
+        if (func.__qualname__.find(".") == -1 or func.__qualname__.find("<locals>") != -1):
+            self_or_cls = None
             subject_input = args[0]
             args = args[1:]
         else:
-            self = args[0]
+            self_or_cls = args[0]
             subject_input = args[1]
             args = args[2:]
 
         if (subject_input is None):
-            return None
+            warnings.warn(f"Could not find any input for the subject(s) to convert to a list of subject ids. Returning empty list.")
+
         elif ((isinstance(subject_input, str) and os.path.exists(subject_input)) or isinstance(subject_input, TextIOWrapper) or isinstance(subject_input, TextIO)):
             subject_ids = pd.read_csv(Analyzer.verifyFile(subject_input, ".csv"), usecols=["subject_id"])["subject_id"].tolist()
         elif(isinstance(subject_input, str) or isinstance(subject_input, int)):
@@ -69,48 +93,29 @@ def uses_subject_ids(func):
                     subject_ids.append(int(subject_id))
                 except ValueError:
                     raise ValueError("Invalid subject ID: " + str(subject_id))
+            subject_input_type = type(subject_input)
+            if (not isinstance(subject_input, list) and not isinstance(subject_input, tuple)):
+                warnings.warn(f"Subject type argument {subject_input} of type '{subject_input_type.__name__}' is not a list or tuple. Returning results as a list.")
+                subject_input_type = list
+            subject_ids = subject_input_type(subject_ids)
         else:
             raise TypeError("Invalid subjects type: " + str(type(subject_input)))
 
-        if(self is None):
-            return func.__func__(subject_ids, *args, **kwargs)
+        if(self_or_cls is None):
+            if(is_static_method or is_class_method):
+                return func.__func__(subject_ids, *args, **kwargs)
+            else:
+                return func(subject_ids, *args, **kwargs)
         else:
-            return func(self, subject_ids, *args, **kwargs)
+            return func(self_or_cls, subject_ids, *args, **kwargs)
+
     return conversion_wrapper
 
-# Converts a function that takes in a single value and returns a single value into a function that takes in an iterable and returns a list of values
-def multioutput(func):
-    @functools.wraps(func)
-    def wrapper(*args, **kwargs):
-        is_static_method = isinstance(func, staticmethod)
-        is_class_method = isinstance(func, classmethod)
-        if(is_static_method or is_class_method):
-            if(len(args) == 0):
-                raise TypeError("No arguments provided to {}.".format(func.__name__))
-            if(isinstance(args[0], Iterable) and not isinstance(args[0], str) and not isinstance(args[0], TextIOWrapper) and not isinstance(args[0], TextIO)):
-                iterable_type = type(args[0])
-                iterable_values = args[0]
-                args = args[1:]
-                return iterable_type([func.__func__(iterable_value, *args, **kwargs) for iterable_value in iterable_values])
-            else:
-                return func.__func__(*args, **kwargs)
-        else:
-            self = args[0]
-            args = args[1:]
-            if(len(args) == 0):
-                raise TypeError("No arguments provided to {}.".format(func.__name__))
-            if(isinstance(args[0], Iterable) and not isinstance(args[0], str) and not isinstance(args[0], TextIOWrapper) and not isinstance(args[0], TextIO)):
-                iterable_type = type(args[0])
-                iterable_values = args[0]
-                args = args[1:]
-                return iterable_type([func(self, iterable_value, *args, **kwargs) for iterable_value in iterable_values])
-            else:
-                return func(self, *args, **kwargs)
-    return wrapper
-
+# noinspection PyRedundantParentheses
 class Analyzer:
     def __init__(self, extracted_file: file_typing, reduced_file: file_typing, subjects_file: Optional[file_typing] = None, save_login: bool = True) -> None:
         # Verify that the extracted_file is a valid file
+
         self.extracted_file, self.reduced_file = Analyzer.verifyFile((extracted_file, reduced_file), required_file_type=".csv")
 
         # Read the extracted and reduced files into Pandas DataFrames
@@ -128,8 +133,11 @@ class Analyzer:
             self.subject_set_id = None
             self.login(save_login)
 
-    @multioutput
+    # Helper methods for __init__
+    # ------------------------------------------------------------------------------------------------------------------
+
     @staticmethod
+    @multioutput
     def verifyFile(file: file_typing, required_file_type: Optional[str] = None) -> str:
         """
         Verifies that the file is a valid file.
@@ -195,22 +203,115 @@ class Analyzer:
         # Create Spout object to access the Zooniverse project
         Spout(project_identifier=project_id, login=login, display_printouts=True)
 
-    def getUniqueUsers(self, include_logged_out=True):
-        if(include_logged_out):
-            return self.extracted_dataframe["user_name"].unique()
-        else:
-            unique_users = self.extracted_dataframe["user_name"].unique()
-            logged_in_unique_users = [user for user in unique_users if "not-logged-in" not in user]
-            return logged_in_unique_users
+    # Methods related to classifications
+    # ------------------------------------------------------------------------------------------------------------------
 
+    # Total, or subset, classification methods
     def getTotalClassifications(self):
         # Return the number of classifications
         return len(self.extracted_dataframe)
 
-    @multioutput
+    def plotClassificationDistribution(self, total_subject_count=None, **kwargs):
+        # if title is in kwargs, then remove it and put its value in the title
+        if ("title" in kwargs):
+            plt.title(kwargs["title"])
+            del kwargs["title"]
+        else:
+            plt.title("Classification Distribution")
+
+        if ("xlabel" in kwargs):
+            plt.xlabel(kwargs["xlabel"])
+            del kwargs["xlabel"]
+        else:
+            plt.xlabel("Number of Classifications")
+        if ("ylabel" in kwargs):
+            plt.ylabel(kwargs["ylabel"])
+            del kwargs["ylabel"]
+        else:
+            plt.ylabel("Number of Subjects")
+
+        number_of_classifications_dict = self.getClassificationCountDictionary(total_subject_count)
+
+        plt.bar(number_of_classifications_dict.keys(), number_of_classifications_dict.values(), **kwargs)
+
+        for key in number_of_classifications_dict:
+            plt.text(key, number_of_classifications_dict[key], number_of_classifications_dict[key], ha='center',
+                     va='bottom')
+
+        plt.xticks(range(len(number_of_classifications_dict)))
+        plt.show()
+
+    # TODO: Rewrite these classification time methods to use a single method which takes in a list of usernames and returns a list of classification times/stats
+    def computeClassificationTimeStatistics(self):
+
+        # Get the unique usernames
+        usernames = self.getUniqueUsers()
+
+        # Initialize the list of classification times
+        users_classification_times = []
+
+        # Iterate over all unique usernames
+        for username in usernames:
+
+            # Get the user's classifications
+            user_classifications = self.getUserClassifications(username)
+
+            # Convert the created_at column to datetime objects
+            user_times = pd.to_datetime(user_classifications["created_at"])
+
+            # Initialize the previous index
+            previous_index = None
+
+            # Iterate over all indices in the user's classifications
+            for index in user_times.index:
+                # If there is a previous index, then compute the time difference
+                if (previous_index is not None):
+                    # Compute the time difference between the current and previous classification
+                    time_difference = user_times[index] - user_times[previous_index]
+
+                    # Set the upper time limit to 5 minutes
+                    upper_time_limit = 60 * 5
+
+                    # If the time difference is less than the upper time limit, then add it to the list of classification times
+                    if (time_difference.seconds < upper_time_limit):
+                        users_classification_times.append(time_difference.seconds)
+                # Set the previous index to the current index
+                previous_index = index
+
+        # Compute the average time between classifications for all users
+        users_average_time = sum(users_classification_times) / len(users_classification_times)
+
+        users_std_time = np.std(users_classification_times)
+
+        median_time = np.median(users_classification_times)
+
+        # Return the average time between classifications for all users
+        return users_average_time, users_std_time, median_time
+
+    def getClassificationCountDictionary(self, total_subject_count=None):
+        subject_ids = self.getSubjectIDs()
+        number_of_classifications_dict = {}
+        for subject_id in subject_ids:
+            classification_dict = self.getSubjectClassifications(subject_id)
+            total_classifications = classification_dict['yes'] + classification_dict['no']
+            if (total_classifications in number_of_classifications_dict):
+                number_of_classifications_dict[total_classifications] += 1
+            else:
+                number_of_classifications_dict[total_classifications] = 1
+
+        if (total_subject_count is not None):
+            number_of_classifications_dict[0] = total_subject_count - len(subject_ids)
+        number_of_classifications_dict = dict(sorted(number_of_classifications_dict.items()))
+        return number_of_classifications_dict
+
+    def getSubsetClassificationTotal(self, minimum_count=0, total_subject_count=None):
+        classification_count_dict = self.getClassificationCountDictionary(total_subject_count)
+        return sum(value for key, value in classification_count_dict.items() if key >= minimum_count)
+
+    # User classification methods
     def getUserClassifications(self, user_identifier):
         # Check if the user_id is a string or an integer
-        if(isinstance(user_identifier, str)):
+        if (isinstance(user_identifier, str)):
             # If it's a string, then it's a username
             username = user_identifier
             return self.extracted_dataframe[self.extracted_dataframe["user_name"] == username]
@@ -218,53 +319,11 @@ class Analyzer:
             # If it's an integer, then it's a Zooniverse ID
             return self.extracted_dataframe[self.extracted_dataframe["user_id"] == user_identifier]
 
-    @multioutput
-    def getUserClassificationsCount(self, user_id):
+    def getUserClassificationsCount(self, user_identifier):
         # Return the number of classifications made by that user
-        return len(self.getUserClassifications(user_id))
+        return len(self.getUserClassifications(user_identifier))
 
-    def getTopUsers(self, count_threshold=None, percentile=None):
-
-        if (count_threshold is None and percentile is None):
-            raise ValueError("You must provide either a count_threshold or a percentile.")
-        elif(count_threshold is not None and percentile is not None):
-            raise ValueError("You cannot provide both a count_threshold and a percentile.")
-
-        unique_users = self.getUniqueUsers()
-        user_classifications_dict = {}
-
-        for unique_user in unique_users:
-            user_classifications_dict[unique_user] = self.getUserClassificationsCount(unique_user)
-
-        # Sort the dictionary by the number of classifications
-        sorted_user_classifications_dict = {k: v for k, v in sorted(user_classifications_dict.items(), key=lambda item: item[1])}
-
-        # Reverse the dictionary
-        sorted_user_classifications_dict = dict(reversed(list(sorted_user_classifications_dict.items())))
-
-        top_users_dict = {}
-
-        def userMeetsRequirements(user, count_threshold, percentile):
-            if(percentile is not None):
-                if(sorted_user_classifications_dict[user] >= np.percentile(list(sorted_user_classifications_dict.values()), percentile)):
-                    return True
-                else:
-                    return False
-            else:
-                if(sorted_user_classifications_dict[user] >= count_threshold):
-                    return True
-                else:
-                    return False
-
-        for user in sorted_user_classifications_dict:
-            if(userMeetsRequirements(user, count_threshold, percentile)):
-                top_users_dict[user] = sorted_user_classifications_dict[user]
-        return top_users_dict
-
-    def getTopUsersCount(self, count_threshold=None, percentile=None):
-        top_users_dict = self.getTopUsers(count_threshold=count_threshold, percentile=percentile)
-        return len(top_users_dict)
-
+    # Top users classification methods
     def getTopUsersClassificationsCount(self, count_threshold=None, percentile=None):
         top_users_dict = self.getTopUsers(count_threshold=count_threshold, percentile=percentile)
         return sum(top_users_dict.values())
@@ -311,152 +370,39 @@ class Analyzer:
 
         plt.show()
 
-    def getSubjectIDs(self):
-        # Return the list of subject IDs
-        return self.reduced_dataframe["subject_id"].values
-
-    @uses_subject_ids
-    @multioutput
-    def getSubjectDataframe(self, subject_input: subjects_typing, dataframe_type: str = "default") -> pd.DataFrame:
-
-        def getSubjectDataframeFromID(subject_id: int, dataframe_type: str = "default") -> pd.DataFrame:
-
-            if(not isinstance(subject_id, int)):
-                raise ValueError("The subject_id must be an integer.")
-
-            if (dataframe_type == "default"):
-                # If default, then return the metadata of the subject as a dataframe
-                subject_metadata = self.getSubjectMetadata(subject_id)
-
-                if(subject_metadata is None):
-                    warnings.warn(f"Subject {subject_id} does not exist, returning empty Dataframe.")
-                    return pd.DataFrame()
-
-                # Add the standard subject_id column
-                subject_metadata["subject_id"] = subject_id
-
-                # Add the standard metadata column
-                subject_metadata["metadata"] = str(subject_metadata)
-
-                # Convert the metadata to a dataframe
-                subject_metadata_dataframe = pd.DataFrame.from_dict(subject_metadata, orient="index").transpose()
-                return subject_metadata_dataframe
-
-            elif (dataframe_type == "reduced"):
-                # If reduced, then return the reduced dataframe for that subject
-                return self.reduced_dataframe[self.reduced_dataframe["subject_id"] == subject_id]
-            elif (dataframe_type == "extracted"):
-                # If not reduced, then return the extracted dataframe for that subject
-                return self.extracted_dataframe[self.extracted_dataframe["subject_id"] == subject_id]
-
-        subject_dataframe = getSubjectDataframeFromID(subject_input, dataframe_type=dataframe_type)
-
-        # ignore warnings about setting values on a copy of a slice from a DataFrame
-        pd.options.mode.chained_assignment = None
-        subject_dataframe.drop_duplicates(subset=["subject_id"], inplace=True)
-        return subject_dataframe
-
-    def combineSubjectDataframes(self, subject_dataframes: Iterable[pd.DataFrame]) -> pd.DataFrame:
-        # Combine a list of subject dataframes into a single dataframe
-        if(not isinstance(subject_dataframes, Iterable)):
-            if(isinstance(subject_dataframes, pd.DataFrame)):
-                return subject_dataframes
-            else:
-                raise ValueError("The subject_dataframes must be a list of dataframes.")
-
-        subject_dataframe = pd.concat(subject_dataframes, ignore_index=True)
-        subject_dataframe.drop_duplicates(subset=["subject_id"], inplace=True)
-        subject_dataframe.reset_index(drop=True, inplace=True)
-        return subject_dataframe
-
-    @multioutput
+    # Subject classification methods
     @uses_subject_ids
     def getSubjectClassifications(self, subject_input):
         # Get the subject's dataframe
-        subject_dataframes = self.getSubjectDataframe(subject_input, dataframe_type="reduced")
-        classification_dicts = []
+        subject_dataframe = self.getSubjectDataframe(subject_input, dataframe_type="reduced")
 
-        if(not isinstance(subject_dataframes, list)):
-            subject_dataframes = [subject_dataframes]
+        if (len(subject_dataframe) == 0):
+            warnings.warn(f"Subject {subject_input} does not exist, returning None.")
+            return None
 
-        for subject_dataframe in subject_dataframes:
+        try:
+            # Try to get the number of "yes" classifications
+            yes_count = int(subject_dataframe["data.yes"].values[0])
+        except ValueError:
+            # If there are no "yes" classifications, then set the count to 0
+            yes_count = 0
 
-            try:
-                # Try to get the number of "yes" classifications
-                yes_count = int(subject_dataframe["data.yes"].values)
-            except ValueError:
-                # If there are no "yes" classifications, then set the count to 0
-                yes_count = 0
+        try:
+            # Try to get the number of "no" classifications
+            no_count = int(subject_dataframe["data.no"].values[0])
+        except ValueError:
+            # If there are no "no" classifications, then set the count to 0
+            no_count = 0
 
-            try:
-                # Try to get the number of "no" classifications
-                no_count = int(subject_dataframe["data.no"].values[0])
-            except ValueError:
-                # If there are no "no" classifications, then set the count to 0
-                no_count = 0
+        # Return the dictionary of the number of "yes" and "no" classifications
+        classification_dict = {"yes": yes_count, "no": no_count}
+        return classification_dict
 
-            # Return the dictionary of the number of "yes" and "no" classifications
-            classification_dicts.append({"yes": yes_count, "no": no_count})
-
-        if(len(classification_dicts) == 1):
-            return classification_dicts[0]
-        else:
-            return classification_dicts
-
-    def getClassificationCountDict(self, total_subject_count=None):
-        subject_ids = self.getSubjectIDs()
-        number_of_classifications_dict = {}
-        for subject_id in subject_ids:
-            classification_dict = self.getSubjectClassifications(subject_id)
-            total_classifications = classification_dict['yes'] + classification_dict['no']
-            if (total_classifications in number_of_classifications_dict):
-                number_of_classifications_dict[total_classifications] += 1
-            else:
-                number_of_classifications_dict[total_classifications] = 1
-
-        if(total_subject_count is not None):
-            number_of_classifications_dict[0] = total_subject_count - len(subject_ids)
-        number_of_classifications_dict = dict(sorted(number_of_classifications_dict.items()))
-        return number_of_classifications_dict
-
-    def getSubsetClassificationCount(self, minimum_count=0, total_subject_count=None):
-        classification_count_dict = self.getClassificationCountDict(total_subject_count)
-        return sum(value for key, value in classification_count_dict.items() if key >= minimum_count)
-
-    def plotClassificationDistribution(self, total_subject_count=None, **kwargs):
-        # if title is in kwargs, then remove it and put its value in the title
-        if("title" in kwargs):
-            plt.title(kwargs["title"])
-            del kwargs["title"]
-        else:
-            plt.title("Classification Distribution")
-
-        if("xlabel" in kwargs):
-            plt.xlabel(kwargs["xlabel"])
-            del kwargs["xlabel"]
-        else:
-            plt.xlabel("Number of Classifications")
-        if("ylabel" in kwargs):
-            plt.ylabel(kwargs["ylabel"])
-            del kwargs["ylabel"]
-        else:
-            plt.ylabel("Number of Subjects")
-
-        number_of_classifications_dict = self.getClassificationCountDict(total_subject_count)
-
-        plt.bar(number_of_classifications_dict.keys(), number_of_classifications_dict.values(), **kwargs)
-
-        for key in number_of_classifications_dict:
-            plt.text(key, number_of_classifications_dict[key], number_of_classifications_dict[key], ha='center', va='bottom')
-
-        plt.xticks(range(len(number_of_classifications_dict)))
-        plt.show()
-
-    def plotSubjectClassifications(self, subject_id):
+    @uses_subject_ids
+    def plotSubjectClassifications(self, subject_input):
 
         # Get the number of "yes" and "no" classifications for that subject as a dictionary
-        classification_dict = self.getSubjectClassifications(subject_id)
-
+        classification_dict = self.getSubjectClassifications(subject_input)
         # Get the number of "yes" and "no" classifications from the dictionary
         yes_count = classification_dict["yes"]
         no_count = classification_dict["no"]
@@ -471,59 +417,12 @@ class Analyzer:
         # Plot the pie chart
         plt.pie([yes_percent, no_percent], labels=["Yes", "No"], autopct='%1.1f%%')
         plt.axis('equal')
-        plt.title("Subject ID: " + str(subject_id) + " Classifications")
-        plt.legend([f"{yes_count} classifications", f"{no_count} classifications"])
+        plt.title("Subject ID: " + str(subject_input) + " Classifications")
+        plt.legend([f"{yes_count} Yes classifications", f"{no_count} No classifications"], loc="upper left")
         plt.show()
 
-    # TODO: Rewrite these classification time methods to use a single method which takes in a list of usernames and returns a list of classification times/stats
-    def computeClassificationTimeStatistics(self):
-
-        # Get the unique usernames
-        usernames = self.getUniqueUsers()
-
-        # Initialize the list of classification times
-        users_classification_times = []
-
-        # Iterate over all unique usernames
-        for username in usernames:
-
-            # Get the user's classifications
-            user_classifications = self.getUserClassifications(username)
-
-            # Convert the created_at column to datetime objects
-            user_times = pd.to_datetime(user_classifications["created_at"])
-
-            # Initialize the previous index
-            previous_index = None
-
-            # Iterate over all indices in the user's classifications
-            for index in user_times.index:
-                # If there is a previous index, then compute the time difference
-                if(previous_index is not None):
-                    # Compute the time difference between the current and previous classification
-                    time_difference = user_times[index] - user_times[previous_index]
-
-                    # Set the upper time limit to 5 minutes
-                    upper_time_limit = 60*5
-
-                    # If the time difference is less than the upper time limit, then add it to the list of classification times
-                    if(time_difference.seconds < upper_time_limit):
-                        users_classification_times.append(time_difference.seconds)
-                # Set the previous index to the current index
-                previous_index = index
-
-        # Compute the average time between classifications for all users
-        users_average_time = sum(users_classification_times) / len(users_classification_times)
-
-        users_std_time = np.std(users_classification_times)
-
-        median_time = np.median(users_classification_times)
-
-        # Return the average time between classifications for all users
-        return users_average_time, users_std_time, median_time
-
-    @multioutput
-    def computeUserClassificationTimeStatistics(self, username):
+    # Classification time statistics methods
+    def getUserClassificationTimes(self, username):
         # Get the user's classifications
         user_classifications = self.getUserClassifications(username)
 
@@ -551,71 +450,61 @@ class Analyzer:
             # Set the previous index to the current index
             previous_index = index
 
-        # Compute the average time between classifications for the user
+        return user_classification_times
 
+    def computeUserClassificationTimeStatistics(self, username):
+        # Get the user's classification times
+        user_classification_times = self.getUserClassificationTimes(username)
 
-        if(len(user_classification_times) == 0):
+        if (len(user_classification_times) == 0):
             raise ValueError("User " + username + " has no classifications.")
-        user_average_time = sum(user_classification_times) / len(user_classification_times)
 
-        user_std_time = np.std(user_classification_times)
-
-        median_time = np.median(user_classification_times)
+        # Compute the average, standard deviation, and median of the user's classification times
+        user_average_time, user_std_time, user_median_time = self.computeTimeStatistics(user_classification_times)
 
         # Return the average time between classifications for all users
-        return user_average_time, user_std_time, median_time
+        return user_average_time, user_std_time, user_median_time
+
+    def computeTimeStatistics(self, classification_times):
+        average_time = sum(classification_times) / len(classification_times)
+
+        std_time = np.std(classification_times)
+
+        median_time = np.median(classification_times)
+
+        # Return the average time between classifications for all users
+        return average_time, std_time, median_time
 
     def plotClassificationTimeHistogram(self, bins=100):
 
         # Get the unique usernames
         usernames = self.getUniqueUsers()
 
-        # Initialize the list of classification times
-        users_classification_times = []
+        all_classification_times = []
 
-        # Iterate over all unique usernames
+        # Iterate over all usernames
         for username in usernames:
-            # Get the user's classifications
-            user_classifications = self.getUserClassifications(username)
+            # Get the user's classification times
+            user_classification_times = self.getUserClassificationTimes(username)
 
-            # Convert the created_at column to datetime objects
-            user_times = pd.to_datetime(user_classifications["created_at"])
-
-            # Initialize the previous index
-            previous_index = None
-
-            # Iterate over all indices in the user's classifications
-            for index in user_times.index:
-                # If there is a previous index, then compute the time difference
-                if(previous_index is not None):
-                    # Compute the time difference between the current and previous classification
-                    time_difference = user_times[index] - user_times[previous_index]
-
-                    # Set the lower time limit to 0 seconds
-                    lower_time_limit = 0
-
-                    # Set the upper time limit to 5 minutes
-                    upper_time_limit = 60*5
-
-                    # If the time difference is less than the upper time limit, then add it to the list of classification times
-                    if(time_difference.seconds > lower_time_limit and time_difference.seconds < upper_time_limit):
-                        users_classification_times.append(time_difference.seconds)
-
-                # Set the previous index to the current index
-                previous_index = index
+            # Convert the list of lists to a single list
+            all_classification_times.extend(user_classification_times)
 
         # Plot the histogram
-        plt.hist(users_classification_times, bins=bins)
+        plt.hist(all_classification_times, bins=bins)
 
-        users_average_time = sum(users_classification_times) / len(users_classification_times)
-        plt.axvline(users_average_time, color='red', linestyle='solid', linewidth=1, label="Average Time: " + str(round(users_average_time, 2)) + " seconds")
+        # Compute the classification time statistics for all users
+        all_average_time, all_std_time, all_median_time = self.computeTimeStatistics(all_classification_times)
 
-        user_std_time = np.std(users_classification_times)
-        plt.axvline(users_average_time + user_std_time, color='red', linestyle='dashed', linewidth=1, label="Standard Deviation: " + str(round(user_std_time, 2)) + " seconds")
-        plt.axvline(users_average_time - user_std_time, color='red', linestyle='dashed', linewidth=1)
+        plt.axvline(all_average_time, color='red', linestyle='solid', linewidth=1,
+                    label="Average Time: " + str(round(all_average_time, 2)) + " seconds")
 
-        median_time = np.median(users_classification_times)
-        plt.axvline(median_time, color='orange', linestyle='solid', linewidth=1, label="Median: " + str(median_time) + " seconds")
+        plt.axvline(all_std_time + all_std_time, color='red', linestyle='dashed', linewidth=1,
+                    label="Standard Deviation: " + str(round(all_std_time, 2)) + " seconds")
+        plt.axvline(all_std_time - all_std_time, color='red', linestyle='dashed', linewidth=1)
+
+        plt.axvline(all_median_time, color='orange', linestyle='solid', linewidth=1,
+                    label="Median: " + str(all_median_time) + " seconds")
 
         plt.title("Classification Time Histogram")
         plt.xlabel("Time (seconds)")
@@ -662,14 +551,17 @@ class Analyzer:
         plt.hist(user_classification_times, bins=bins)
 
         users_average_time = sum(user_classification_times) / len(user_classification_times)
-        plt.axvline(users_average_time, color='red', linestyle='solid', linewidth=1, label="Average Time: " + str(round(users_average_time, 2)) + " seconds")
+        plt.axvline(users_average_time, color='red', linestyle='solid', linewidth=1,
+                    label="Average Time: " + str(round(users_average_time, 2)) + " seconds")
 
         user_std_time = np.std(user_classification_times)
-        plt.axvline(users_average_time + user_std_time, color='red', linestyle='dashed', linewidth=1, label="Standard Deviation: " + str(round(user_std_time, 2)) + " seconds")
+        plt.axvline(users_average_time + user_std_time, color='red', linestyle='dashed', linewidth=1,
+                    label="Standard Deviation: " + str(round(user_std_time, 2)) + " seconds")
         plt.axvline(users_average_time - user_std_time, color='red', linestyle='dashed', linewidth=1)
 
         median_time = np.median(user_classification_times)
-        plt.axvline(median_time, color='orange', linestyle='solid', linewidth=1, label="Median: " + str(median_time) + " seconds")
+        plt.axvline(median_time, color='orange', linestyle='solid', linewidth=1,
+                    label="Median: " + str(median_time) + " seconds")
 
         plt.title(f"{username} Classification Time Histogram")
         plt.xlabel("Time (seconds)")
@@ -677,7 +569,7 @@ class Analyzer:
         plt.legend()
         plt.show()
 
-    def classificationTimeline(self, bar=True, binning_parameter = "Day", **kwargs):
+    def classificationTimeline(self, bar=True, binning_parameter="Day", **kwargs):
 
         # Get the classification datetimes
         classification_datetimes = pd.to_datetime(self.extracted_dataframe["created_at"])
@@ -689,25 +581,25 @@ class Analyzer:
         for classification_datetime in classification_datetimes:
 
             # Bin the datetimes
-            if(binning_parameter == "Day"):
+            if (binning_parameter == "Day"):
                 day = classification_datetime.date()
                 if day in binned_datetimes:
                     binned_datetimes[day].append(classification_datetime)
                 else:
                     binned_datetimes[day] = [classification_datetime]
-            elif(binning_parameter == "Week"):
+            elif (binning_parameter == "Week"):
                 week = classification_datetime.isocalendar()[1]
                 if week in binned_datetimes:
                     binned_datetimes[week].append(classification_datetime)
                 else:
                     binned_datetimes[week] = [classification_datetime]
-            elif(binning_parameter == "Month"):
+            elif (binning_parameter == "Month"):
                 month = classification_datetime.month
                 if month in binned_datetimes:
                     binned_datetimes[month].append(classification_datetime)
                 else:
                     binned_datetimes[month] = [classification_datetime]
-            elif(binning_parameter == "Year"):
+            elif (binning_parameter == "Year"):
                 year = classification_datetime.year
                 if year in binned_datetimes:
                     binned_datetimes[year].append(classification_datetime)
@@ -718,7 +610,7 @@ class Analyzer:
         binned_datetimes = {k: len(v) for k, v in binned_datetimes.items()}
 
         # Plot the timeline
-        if(bar):
+        if (bar):
             plt.bar(binned_datetimes.keys(), binned_datetimes.values(), **kwargs)
         else:
             plt.plot(binned_datetimes.keys(), binned_datetimes.values(), **kwargs)
@@ -727,21 +619,128 @@ class Analyzer:
         plt.ylabel("Count")
         plt.show()
 
-    @multioutput
+
+    def getUniqueUsers(self, include_logged_out=True):
+        if(include_logged_out):
+            return self.extracted_dataframe["user_name"].unique()
+        else:
+            unique_users = self.extracted_dataframe["user_name"].unique()
+            logged_in_unique_users = [user for user in unique_users if "not-logged-in" not in user]
+            return logged_in_unique_users
+
+    def getTopUsers(self, count_threshold=None, percentile=None):
+
+        if (count_threshold is None and percentile is None):
+            raise ValueError("You must provide either a count_threshold or a percentile.")
+        elif(count_threshold is not None and percentile is not None):
+            raise ValueError("You cannot provide both a count_threshold and a percentile.")
+
+        unique_users = self.getUniqueUsers()
+        user_classifications_dict = {}
+
+        for unique_user in unique_users:
+            user_classifications_dict[unique_user] = self.getUserClassificationsCount(unique_user)
+
+        # Sort the dictionary by the number of classifications
+        sorted_user_classifications_dict = {k: v for k, v in sorted(user_classifications_dict.items(), key=lambda item: item[1])}
+
+        # Reverse the dictionary
+        sorted_user_classifications_dict = dict(reversed(list(sorted_user_classifications_dict.items())))
+
+        top_users_dict = {}
+
+        def userMeetsRequirements(user, count_threshold, percentile):
+            if(percentile is not None):
+                if(sorted_user_classifications_dict[user] >= np.percentile(list(sorted_user_classifications_dict.values()), percentile)):
+                    return True
+                else:
+                    return False
+            else:
+                if(sorted_user_classifications_dict[user] >= count_threshold):
+                    return True
+                else:
+                    return False
+
+        for user in sorted_user_classifications_dict:
+            if(userMeetsRequirements(user, count_threshold, percentile)):
+                top_users_dict[user] = sorted_user_classifications_dict[user]
+        return top_users_dict
+
+    def getTopUsersCount(self, count_threshold=None, percentile=None):
+        top_users_dict = self.getTopUsers(count_threshold=count_threshold, percentile=percentile)
+        return len(top_users_dict)
+
+    def getSubjectIDs(self):
+        # Return the list of subject IDs
+        return self.reduced_dataframe["subject_id"].values
+
     @uses_subject_ids
-    def getSubject(self, subject_input):
+    def getSubjectDataframe(self, subject_input: subjects_typing, dataframe_type: str = "default") -> Union[pd.DataFrame, List[pd.DataFrame]]:
+
+        @uses_subject_ids
+        def getSubjectDataframeFromID(subject_input, dataframe_type: str = "default") -> pd.DataFrame:
+
+            if(not isinstance(subject_input, int)):
+                raise ValueError("The subject_id must be an integer.")
+
+            if (dataframe_type == "default"):
+                # If default, then return the metadata of the subject as a dataframe
+                subject_metadata = self.getSubjectMetadata(subject_input)
+
+                if(subject_metadata is None):
+                    warnings.warn(f"Subject {subject_input} does not exist, returning empty Dataframe.")
+                    return pd.DataFrame()
+
+                # Add the standard subject_id column
+                subject_metadata["subject_id"] = subject_input
+
+                # Add the standard metadata column
+                subject_metadata["metadata"] = str(subject_metadata)
+
+                # Convert the metadata to a dataframe
+                subject_metadata_dataframe = pd.DataFrame.from_dict(subject_metadata, orient="index").transpose()
+                return subject_metadata_dataframe
+
+            elif (dataframe_type == "reduced"):
+                # If reduced, then return the reduced dataframe for that subject
+                return self.reduced_dataframe[self.reduced_dataframe["subject_id"] == subject_input]
+            elif (dataframe_type == "extracted"):
+                # If not reduced, then return the extracted dataframe for that subject
+                return self.extracted_dataframe[self.extracted_dataframe["subject_id"] == subject_input]
+
+        return getSubjectDataframeFromID(subject_input, dataframe_type=dataframe_type)
+
+
+    def combineSubjectDataframes(self, subject_dataframes: Iterable[pd.DataFrame]) -> pd.DataFrame:
+        # Combine a list of subject dataframes into a single dataframe
+        if(not isinstance(subject_dataframes, Iterable)):
+            if(isinstance(subject_dataframes, pd.DataFrame)):
+                return subject_dataframes
+            else:
+                raise ValueError("The subject_dataframes must be a list of dataframes.")
+
+        subject_dataframe = pd.concat(subject_dataframes, ignore_index=True)
+        subject_dataframe.drop_duplicates(subset=["subject_id"], inplace=True)
+        subject_dataframe.reset_index(drop=True, inplace=True)
+        return subject_dataframe
+
+
+    @uses_subject_ids
+    def getSubject(self, subject_input) -> Union[panoptes_client.Subject, List[panoptes_client.Subject]]:
+        if(not unWISE_verse.Spout.Panoptes_client.logged_in):
+            raise Exception("You must be logged in to Zooniverse to get a subject object, please call the login() method first or don't pass a subject csv to Analyzer.")
 
         # Get the subject with the given subject ID in the subject set with the given subject set ID
         return Spout.get_subject(subject_input, self.subject_set_id)
 
     @uses_subject_ids
-    @multioutput
     def getSubjectMetadata(self, subject_input):
 
         # Get the subject with the given subject ID
         if(self.subjects_file is not None):
             subject_dataframe = self.subjects_dataframe[self.subjects_dataframe["subject_id"] == subject_input]
             if(subject_dataframe.empty):
+                warnings.warn(f"Subject ID {subject_input} was not found in subjects file, {self.subjects_file}: Returning None")
                 return None
             else:
                 return eval(self.subjects_dataframe[self.subjects_dataframe["subject_id"] == subject_input].iloc[0]["metadata"])
@@ -749,41 +748,37 @@ class Analyzer:
             subject = self.getSubject(subject_input)
 
             try:
-                # Get the subject's metadata
-                subject_metadata = subject.metadata
-
-                # Return the subject's metadata
-                return subject_metadata
+                return subject.metadata
             except AttributeError:
-                # If the subject could not be found, then return None
+                warnings.warn(f"Subject ID {subject_input} was not found: Returning None")
                 return None
 
     @uses_subject_ids
-    @multioutput
     def getSubjectMetadataField(self, subject_input, field_name):
-
-        # Get the subject's metadata
+        # Get the subject metadata for the subject with the given subject ID
         subject_metadata = self.getSubjectMetadata(subject_input)
 
-        if(subject_metadata is None):
+        if (subject_metadata is None):
+            warnings.warn(f"Subject ID {subject_input} was not found: Returning None")
             return None
 
         # Get the metadata field with the given field name
-        field_value = subject_metadata.get(field_name)
+        field_value = subject_metadata.get(field_name, None)
 
-        # Return the metadata field value
-        return field_value
+        if (field_value is None):
+            warnings.warn(f"Field name {field_name} was not found in subject ID {subject_input}'s metadata: Returning None")
+            return None
+        else:
+            return field_value
 
     @uses_subject_ids
-    @multioutput
-    def showSubject(self, subject_id, open_in_browser=False):
+    def showSubject(self, subject_input, open_in_browser=False):
 
         # Get the WiseView link for the subject with the given subject ID
-        wise_view_link = self.getSubjectMetadataField(subject_id, "WISEVIEW")
+        wise_view_link = self.getSubjectMetadataField(subject_input, "WISEVIEW")
 
-        # Return None if no WiseView link was found
-        if(wise_view_link is None):
-            print(f"No WiseView link found for subject {subject_id}, so it cannot be shown.")
+        if wise_view_link is None:
+            warnings.warn(f"No WiseView link found for subject ID {subject_input}: Returning None")
             return None
 
         # Remove the WiseView link prefix and suffix
@@ -791,27 +786,23 @@ class Analyzer:
         wise_view_link = wise_view_link.removesuffix(")")
 
         # Determine whether to open the subject in the default web browser
-        if wise_view_link is None:
-            print(f"No WiseView link found for subject {subject_id}")
-            return None
-        else:
-            if(open_in_browser):
-                webbrowser.open(wise_view_link)
-                delay = 10
-                print(f"Opening WiseView link for subject {subject_id}.")
-                sleep(delay)
+
+        if (open_in_browser):
+            webbrowser.open(wise_view_link)
+            delay = 10
+            print(f"Opening WiseView link for subject ID {subject_input}.")
+            sleep(delay)
 
         # Return the WiseView link
         return wise_view_link
 
     @uses_subject_ids
-    @multioutput
-    def getSimbadLink(self, subject_id):
+    def getSimbadLink(self, subject_input):
 
-        simbad_link = self.getSubjectMetadataField(subject_id, "SIMBAD")
+        simbad_link = self.getSubjectMetadataField(subject_input, "SIMBAD")
 
         if (simbad_link is None):
-            print(f"No SIMBAD link found for subject {subject_id}, so it cannot be provided.")
+            warnings.warn(f"No SIMBAD link found for subject ID {subject_input}: Returning None")
             return None
 
             # Remove the SIMBAD link prefix and suffix
@@ -821,12 +812,11 @@ class Analyzer:
         return simbad_link
 
     @uses_subject_ids
-    @multioutput
-    def getSimbadQuery(self, subject_id, search_type="Box Search", FOV=120*u.arcsec, radius=60*u.arcsec, plot=False, separation=None):
-        subject_metadata = self.getSubjectMetadata(subject_id)
+    def getSimbadQuery(self, subject_input, search_type="Box Search", FOV=120*u.arcsec, radius=60*u.arcsec, plot=False, separation=None):
+        subject_metadata = self.getSubjectMetadata(subject_input)
 
         if(subject_metadata is None):
-            print(f"No metadata found for subject {subject_id}, so a SIMBAD query cannot be performed.")
+            warnings.warn(f"Subject ID {subject_input} was not found, so a SIMBAD query cannot be performed: Returning None")
             return None
 
         RA = subject_metadata["RA"]
@@ -850,12 +840,11 @@ class Analyzer:
         return result
 
     @uses_subject_ids
-    @multioutput
-    def getConditionalSimbadQuery(self, subject_id, search_type="Box Search", FOV=120*u.arcsec, radius=60*u.arcsec, otypes=["BD*", "BD?", "BrownD*", "BrownD?", "BrownD*_Candidate", "PM*"], plot=False, separation=None):
-        subject_metadata = self.getSubjectMetadata(subject_id)
+    def getConditionalSimbadQuery(self, subject_input, search_type="Box Search", FOV=120*u.arcsec, radius=60*u.arcsec, otypes=["BD*", "BD?", "BrownD*", "BrownD?", "BrownD*_Candidate", "PM*"], plot=False, separation=None):
+        subject_metadata = self.getSubjectMetadata(subject_input)
 
         if (subject_metadata is None):
-            print(f"No metadata found for subject {subject_id}, so a SIMBAD conditional query cannot be performed.")
+            warnings.warn(f"Subject ID {subject_input} was not found, so a conditional SIMBAD query cannot be performed: Returning None")
             return None
 
         RA = subject_metadata["RA"]
@@ -889,19 +878,17 @@ class Analyzer:
         return result
 
     @uses_subject_ids
-    @multioutput
-    def sourceExistsInSimbad(self, subject_id, search_type="Box Search", FOV=120*u.arcsec, radius=60*u.arcsec):
+    def sourceExistsInSimbad(self, subject_input, search_type="Box Search", FOV=120*u.arcsec, radius=60*u.arcsec):
 
-        return len(self.getSimbadQuery(subject_id, search_type=search_type, FOV=FOV, radius=radius)) > 0
+        return len(self.getSimbadQuery(subject_input, search_type=search_type, FOV=FOV, radius=radius)) > 0
 
     @uses_subject_ids
-    @multioutput
-    def getGaiaQuery(self, subject_id, search_type="Box Search", FOV=120*u.arcsec, radius=60*u.arcsec, plot=False, separation=None):
+    def getGaiaQuery(self, subject_input, search_type="Box Search", FOV=120*u.arcsec, radius=60*u.arcsec, plot=False, separation=None):
         # Get the subject's metadata
-        subject_metadata = self.getSubjectMetadata(subject_id)
+        subject_metadata = self.getSubjectMetadata(subject_input)
 
         if (subject_metadata is None):
-            print(f"No metadata found for subject {subject_id}, so a Gaia query cannot be performed.")
+            warnings.warn(f"Subject ID {subject_input} was not found, so a Gaia query cannot be performed: Returning None")
             return None
 
         RA = subject_metadata["RA"]
@@ -925,12 +912,11 @@ class Analyzer:
         return result
 
     @uses_subject_ids
-    @multioutput
-    def getConditionalGaiaQuery(self, subject_id, search_type="Box Search", FOV=120*u.arcsec, radius=60*u.arcsec, gaia_pm=100 * u.mas / u.yr, plot=False, separation=None):
-        subject_metadata = self.getSubjectMetadata(subject_id)
+    def getConditionalGaiaQuery(self, subject_input, search_type="Box Search", FOV=120*u.arcsec, radius=60*u.arcsec, gaia_pm=100 * u.mas / u.yr, plot=False, separation=None):
+        subject_metadata = self.getSubjectMetadata(subject_input)
 
         if (subject_metadata is None):
-            print(f"No metadata found for subject {subject_id}, so a Gaia conditional query cannot be performed.")
+            warnings.warn(f"Subject ID {subject_input} was not found, so a conditional Gaia query cannot be performed: Returning None")
             return None
 
         RA = subject_metadata["RA"]
@@ -964,20 +950,19 @@ class Analyzer:
         return result
 
     @uses_subject_ids
-    @multioutput
-    def sourceExistsInGaia(self, subject_id, search_type="Box Search", FOV=120*u.arcsec, radius=60*u.arcsec):
+    def sourceExistsInGaia(self, subject_input, search_type="Box Search", FOV=120*u.arcsec, radius=60*u.arcsec):
 
-        return len(self.getGaiaQuery(subject_id, search_type=search_type, FOV=FOV, radius=radius)) > 0
+        return len(self.getGaiaQuery(subject_input, search_type=search_type, FOV=FOV, radius=radius)) > 0
 
     @uses_subject_ids
-    @multioutput
-    def subjectExists(self, subject_id):
+    def subjectExists(self, subject_input):
 
         # Get the subject's metadata
-        metadata = self.getSubjectMetadata(subject_id)
 
-        # Return whether the subject exists
-        return metadata is not None
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            metadata = self.getSubjectMetadata(subject_input)
+            return metadata is not None
 
     @multioutput
     @staticmethod
@@ -996,25 +981,27 @@ class Analyzer:
         return bitmask_dict.get(bitmask, None)
 
     @uses_subject_ids
-    @multioutput
-    def getSubjectType(self, subject_id):
+    def getSubjectType(self, subject_input):
         # Get the bitmask for the subject
-        bitmask = self.getSubjectMetadataField(subject_id, "#BITMASK")
+        bitmask = self.getSubjectMetadataField(subject_input, "#BITMASK")
 
         if(bitmask is None):
-            print(f"Subject {subject_id} does not have a bitmask, so its type cannot be determined.")
+            warnings.warn(f"Subject ID {subject_input} was not found, so a subject type cannot be determined: Returning None")
             return None
 
         # Convert the bitmask to a subject type
-        bitmask_type = self.bitmaskToType(bitmask)
+        bitmask_type = Analyzer.bitmaskToType(bitmask)
 
         return bitmask_type
 
     @uses_subject_ids
-    @multioutput
-    def isAcceptableCandidate(self, subject_id, acceptance_ratio=None, acceptance_threshold=0):
-        subject_type = self.getSubjectType(subject_id)
-        subject_classifications = self.getSubjectClassifications(subject_id)
+    def isAcceptableCandidate(self, subject_input, acceptance_ratio=None, acceptance_threshold=0):
+        subject_type = self.getSubjectType(subject_input)
+        subject_classifications = self.getSubjectClassifications(subject_input)
+
+        if (subject_classifications is None):
+            warnings.warn(f"Subject ID {subject_input} was not found, so an acceptable candidate cannot be determined: Returning None")
+            return None, None
 
         # Count the number of successful classifications for each of the bitmask types
         total_classifications = subject_classifications["yes"] + subject_classifications["no"]
@@ -1032,6 +1019,11 @@ class Analyzer:
 
         for subject_id in subject_ids:
             acceptable_boolean, subject_classifications_dict = self.isAcceptableCandidate(subject_id, acceptance_ratio=acceptance_ratio, acceptance_threshold=acceptance_threshold)
+
+            if(acceptable_boolean is None or subject_classifications_dict is None):
+                warnings.warn(f"Subject ID {subject_id} was not found, so it cannot be determined if it is an acceptable candidate: Skipping")
+                continue
+
             if (acceptable_boolean):
                 print("Subject " + str(subject_id) + f" is an acceptable candidate: {subject_classifications_dict}")
                 accepted_subjects.append(subject_id)
@@ -1102,7 +1094,6 @@ class Analyzer:
         print("Generated files: " + str(generated_files))
 
     @uses_subject_ids
-    @multioutput
     def searchSubjectFieldOfView(self, subject_id):
 
         FOV = 120 * u.arcsec
@@ -1116,7 +1107,6 @@ class Analyzer:
             return False, database_check_dict
 
     @uses_subject_ids
-    @multioutput
     def checkSubjectFieldOfView(self, subject_id, otypes=["BD*", "BD?", "BrownD*", "BrownD?", "BrownD*_Candidate", "PM*"], gaia_pm=100 * u.mas / u.yr):
 
         simbad_query = self.getConditionalSimbadQuery(subject_id, search_type="Box Search", FOV=120*u.arcsec, otypes=otypes)
