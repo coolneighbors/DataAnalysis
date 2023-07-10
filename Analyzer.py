@@ -21,10 +21,10 @@ import functools
 import panoptes_client
 import unWISE_verse
 from astropy.coordinates import SkyCoord
+from unWISE_verse.Spout import Spout, check_login
 import astropy.units as u
 from astropy.time import Time
 from typing import List, Dict, Tuple, Union, Optional, TextIO, Any, Callable, Iterable, Set
-from unWISE_verse.Spout import Spout
 from Searcher import SimbadSearcher, GaiaSearcher
 from Plotter import SubjectCSVPlotter
 # TODO: Add a weighting system for users' classifications based on their accuracy on the known subjects
@@ -111,14 +111,44 @@ def uses_subject_ids(func):
 
     return conversion_wrapper
 
-# noinspection PyRedundantParentheses
+def uses_user_identifiers(func):
+    @functools.wraps(func)
+    def conversion_wrapper(*args, **kwargs):
+        is_static_method = isinstance(func, staticmethod)
+        is_class_method = isinstance(func, classmethod)
+        if (func.__qualname__.find(".") == -1 or func.__qualname__.find("<locals>") != -1):
+            self_or_cls = None
+            user_identifier = args[0]
+            args = args[1:]
+        else:
+            self_or_cls = args[0]
+            user_identifier = args[1]
+            args = args[2:]
+
+        if(user_identifier is None):
+            raise ValueError("No user identifier provided.")
+
+        try:
+            user_identifier = int(user_identifier)
+        except ValueError:
+            pass
+
+        if(self_or_cls is None):
+            if(is_static_method or is_class_method):
+                return func.__func__(user_identifier, *args, **kwargs)
+            else:
+                return func(user_identifier, *args, **kwargs)
+        else:
+            return func(self_or_cls, user_identifier, *args, **kwargs)
+    return conversion_wrapper
+
 class Analyzer:
     def __init__(self, extracted_file: file_typing, reduced_file: file_typing, subjects_file: Optional[file_typing] = None, save_login: bool = True) -> None:
         # Verify that the extracted_file is a valid file
 
-        self.extracted_file, self.reduced_file = Analyzer.verifyFile((extracted_file, reduced_file), required_file_type=".csv")
+        self.extracted_file, self.reduced_file= Analyzer.verifyFile((extracted_file, reduced_file), required_file_type=".csv")
 
-        # Read the extracted and reduced files into Pandas DataFrames
+        # Read the files as Pandas DataFrames
         self.extracted_dataframe = pd.read_csv(self.extracted_file)
         self.reduced_dataframe = pd.read_csv(self.reduced_file)
 
@@ -241,20 +271,19 @@ class Analyzer:
         plt.xticks(range(len(number_of_classifications_dict)))
         plt.show()
 
-    # TODO: Rewrite these classification time methods to use a single method which takes in a list of usernames and returns a list of classification times/stats
     def computeClassificationTimeStatistics(self):
 
         # Get the unique usernames
-        usernames = self.getUniqueUsers()
+        user_identifiers = self.getUniqueUserIdentifiers(user_identifier="username")
 
         # Initialize the list of classification times
         users_classification_times = []
 
         # Iterate over all unique usernames
-        for username in usernames:
+        for user_identifier in user_identifiers:
 
             # Get the user's classifications
-            user_classifications = self.getUserClassifications(username)
+            user_classifications = self.getUserClassifications(user_identifier)
 
             # Convert the created_at column to datetime objects
             user_times = pd.to_datetime(user_classifications["created_at"])
@@ -279,14 +308,10 @@ class Analyzer:
                 previous_index = index
 
         # Compute the average time between classifications for all users
-        users_average_time = sum(users_classification_times) / len(users_classification_times)
-
-        users_std_time = np.std(users_classification_times)
-
-        median_time = np.median(users_classification_times)
+        users_average_time, users_std_time, users_median_time = self.computeTimeStatistics(users_classification_times)
 
         # Return the average time between classifications for all users
-        return users_average_time, users_std_time, median_time
+        return users_average_time, users_std_time, users_median_time
 
     def getClassificationCountDictionary(self, total_subject_count=None):
         subject_ids = self.getSubjectIDs()
@@ -309,6 +334,7 @@ class Analyzer:
         return sum(value for key, value in classification_count_dict.items() if key >= minimum_count)
 
     # User classification methods
+    @uses_user_identifiers
     def getUserClassifications(self, user_identifier):
         # Check if the user_id is a string or an integer
         if (isinstance(user_identifier, str)):
@@ -317,19 +343,22 @@ class Analyzer:
             return self.extracted_dataframe[self.extracted_dataframe["user_name"] == username]
         else:
             # If it's an integer, then it's a Zooniverse ID
-            return self.extracted_dataframe[self.extracted_dataframe["user_id"] == user_identifier]
+            user_id = user_identifier
+            return self.extracted_dataframe[self.extracted_dataframe["user_id"] == user_id]
 
-    def getUserClassificationsCount(self, user_identifier):
+    @multioutput
+    @uses_user_identifiers
+    def getUserClassificationsTotal(self, user_identifier):
         # Return the number of classifications made by that user
         return len(self.getUserClassifications(user_identifier))
 
     # Top users classification methods
-    def getTopUsersClassificationsCount(self, count_threshold=None, percentile=None):
-        top_users_dict = self.getTopUsers(count_threshold=count_threshold, percentile=percentile)
+    def getTopUsersClassificationsTotal(self, count_threshold=None, percentile=None):
+        top_users_dict = self.getTopUsersDictionary(count_threshold=count_threshold, percentile=percentile)
         return sum(top_users_dict.values())
 
-    def plotTopUsersClassificationCounts(self, count_threshold=None, percentile=None, **kwargs):
-        top_users_dict = self.getTopUsers(count_threshold=count_threshold, percentile=percentile)
+    def plotTopUsersClassifications(self, count_threshold=None, percentile=None, **kwargs):
+        top_users_dict = self.getTopUsersDictionary(count_threshold=count_threshold, percentile=percentile)
         # Plot the number of classifications made by each user but stop names from overlapping
         usernames = list(top_users_dict.keys())
         user_counts = list(top_users_dict.values())
@@ -422,10 +451,11 @@ class Analyzer:
         plt.show()
 
     # Classification time statistics methods
-    def getUserClassificationTimes(self, username):
+    @multioutput
+    @uses_user_identifiers
+    def getUserClassificationTimes(self, user_identifier):
         # Get the user's classifications
-        user_classifications = self.getUserClassifications(username)
-
+        user_classifications = self.getUserClassifications(user_identifier)
         user_classification_times = []
 
         # Convert the created_at column to datetime objects
@@ -450,14 +480,21 @@ class Analyzer:
             # Set the previous index to the current index
             previous_index = index
 
+        if(len(user_classification_times) == 0 and len(user_times) > 0):
+            warnings.warn(f"User with user_identifier '{user_identifier}' has too few consecutive classifications, returning an empty list.")
+        elif(len(user_classification_times) == 0 and len(user_times) == 0):
+            warnings.warn(f"User with user_identifier '{user_identifier}' has no classifications, returning an empty list.")
+
         return user_classification_times
 
-    def computeUserClassificationTimeStatistics(self, username):
+    @multioutput
+    @uses_user_identifiers
+    def computeUserClassificationTimeStatistics(self, user_identifier):
         # Get the user's classification times
-        user_classification_times = self.getUserClassificationTimes(username)
+        user_classification_times = self.getUserClassificationTimes(user_identifier)
 
         if (len(user_classification_times) == 0):
-            raise ValueError("User " + username + " has no classifications.")
+            raise ValueError(f"User with user_identifier {user_identifier} has no classifications or does not exist.")
 
         # Compute the average, standard deviation, and median of the user's classification times
         user_average_time, user_std_time, user_median_time = self.computeTimeStatistics(user_classification_times)
@@ -466,110 +503,91 @@ class Analyzer:
         return user_average_time, user_std_time, user_median_time
 
     def computeTimeStatistics(self, classification_times):
-        average_time = sum(classification_times) / len(classification_times)
 
-        std_time = np.std(classification_times)
+        if(len(classification_times) == 0):
+            raise ValueError(f"Classification times list is empty.")
 
-        median_time = np.median(classification_times)
+        average_time = float(sum(classification_times) / len(classification_times))
 
-        # Return the average time between classifications for all users
+        std_time = float(np.std(classification_times))
+
+        median_time = float(np.median(classification_times))
+
+        # Return the average time between classifications for a list of user(s) classification times
         return average_time, std_time, median_time
 
-    def plotClassificationTimeHistogram(self, bins=100):
+    def plotClassificationTimeHistogram(self, bins=100, hist_range=None, **kwargs):
 
         # Get the unique usernames
-        usernames = self.getUniqueUsers()
+        user_identifiers = self.getUniqueUserIdentifiers(user_identifier="username")
 
         all_classification_times = []
 
         # Iterate over all usernames
-        for username in usernames:
+        for user_identifier in user_identifiers:
             # Get the user's classification times
-            user_classification_times = self.getUserClassificationTimes(username)
+            user_classification_times = self.getUserClassificationTimes(user_identifier)
 
             # Convert the list of lists to a single list
             all_classification_times.extend(user_classification_times)
 
-        # Plot the histogram
-        plt.hist(all_classification_times, bins=bins)
-
         # Compute the classification time statistics for all users
         all_average_time, all_std_time, all_median_time = self.computeTimeStatistics(all_classification_times)
 
-        plt.axvline(all_average_time, color='red', linestyle='solid', linewidth=1,
-                    label="Average Time: " + str(round(all_average_time, 2)) + " seconds")
+        if (hist_range is None):
+            hist_range = min(min(all_classification_times), all_average_time - all_std_time), max(max(all_classification_times), all_average_time + all_std_time)
 
-        plt.axvline(all_std_time + all_std_time, color='red', linestyle='dashed', linewidth=1,
-                    label="Standard Deviation: " + str(round(all_std_time, 2)) + " seconds")
-        plt.axvline(all_std_time - all_std_time, color='red', linestyle='dashed', linewidth=1)
+        # Plot the histogram
+        plt.hist(all_classification_times, bins=bins, range=hist_range, **kwargs)
 
-        plt.axvline(all_median_time, color='orange', linestyle='solid', linewidth=1,
-                    label="Median: " + str(all_median_time) + " seconds")
+        plt.axvline(all_average_time, color='red', linestyle='solid', linewidth=1, label=f"Average: {round(all_average_time, 2)} seconds")
 
+        plt.axvline(all_average_time + all_std_time, color='red', linestyle='dashed', linewidth=1, label=f"Average ± Standard Deviation: {round(all_average_time, 2)} ± {round(all_std_time, 2)} seconds")
+        plt.axvline(all_average_time - all_std_time, color='red', linestyle='dashed', linewidth=1)
+
+        plt.axvline(all_median_time, color='orange', linestyle='solid', linewidth=1, label=f"Median: {round(all_median_time, 2)} seconds")
         plt.title("Classification Time Histogram")
         plt.xlabel("Time (seconds)")
         plt.ylabel("Counts")
         plt.legend()
         plt.show()
 
-    def plotUserClassificationTimeHistogram(self, username, bins=100):
+    @multioutput
+    @uses_user_identifiers
+    def plotUserClassificationTimeHistogram(self, user_identifier, bins=100, hist_range=None, **kwargs):
 
         # Initialize the list of classification times
-        user_classification_times = []
+        user_classification_times = self.getUserClassificationTimes(user_identifier)
 
-        # Iterate over all unique usernames
-        # Get the user's classifications
-        user_classifications = self.getUserClassifications(username)
+        if(len(user_classification_times) == 0):
+            warnings.warn(f"User with user_identifier '{user_identifier}' has no classification times, cannot plot their classification time histogram.")
+            return None
 
-        # Convert the created_at column to datetime objects
-        user_times = pd.to_datetime(user_classifications["created_at"])
+        # Compute the classification time statistics for the user
+        user_average_time, user_std_time, user_median_time = self.computeTimeStatistics(user_classification_times)
 
-        # Initialize the previous index
-        previous_index = None
+        if (hist_range is None):
+            hist_range = min(min(user_classification_times), user_average_time - user_std_time), max(max(user_classification_times), user_average_time + user_std_time)
 
-        # Iterate over all indices in the user's classifications
-        for index in user_times.index:
-            # If there is a previous index, then compute the time difference
-            if (previous_index is not None):
-                # Compute the time difference between the current and previous classification
-                time_difference = user_times[index] - user_times[previous_index]
-
-                # Set the lower time limit to 0 seconds
-                lower_time_limit = 0
-
-                # Set the upper time limit to 5 minutes
-                upper_time_limit = 60 * 5
-
-                # If the time difference is less than the upper time limit, then add it to the list of classification times
-                if (time_difference.seconds > lower_time_limit and time_difference.seconds < upper_time_limit):
-                    user_classification_times.append(time_difference.seconds)
-
-            # Set the previous index to the current index
-            previous_index = index
 
         # Plot the histogram
-        plt.hist(user_classification_times, bins=bins)
+        plt.hist(user_classification_times, bins=bins, range=hist_range, **kwargs)
 
         users_average_time = sum(user_classification_times) / len(user_classification_times)
-        plt.axvline(users_average_time, color='red', linestyle='solid', linewidth=1,
-                    label="Average Time: " + str(round(users_average_time, 2)) + " seconds")
+        plt.axvline(user_average_time, color='red', linestyle='solid', linewidth=1, label=f"Average: {round(user_average_time, 2)} seconds")
 
-        user_std_time = np.std(user_classification_times)
-        plt.axvline(users_average_time + user_std_time, color='red', linestyle='dashed', linewidth=1,
-                    label="Standard Deviation: " + str(round(user_std_time, 2)) + " seconds")
-        plt.axvline(users_average_time - user_std_time, color='red', linestyle='dashed', linewidth=1)
+        plt.axvline(user_average_time + user_std_time, color='red', linestyle='dashed', linewidth=1, label=f"Average ± Standard Deviation: {round(user_average_time, 2)} ± {round(user_std_time, 2)} seconds")
+        plt.axvline(user_average_time - user_std_time, color='red', linestyle='dashed', linewidth=1)
 
-        median_time = np.median(user_classification_times)
-        plt.axvline(median_time, color='orange', linestyle='solid', linewidth=1,
-                    label="Median: " + str(median_time) + " seconds")
+        plt.axvline(user_median_time, color='orange', linestyle='solid', linewidth=1, label=f"Median: {round(user_median_time, 2)} seconds")
 
-        plt.title(f"{username} Classification Time Histogram")
+        plt.title(f"{user_identifier} Classification Time Histogram")
         plt.xlabel("Time (seconds)")
         plt.ylabel("Counts")
         plt.legend()
         plt.show()
 
-    def classificationTimeline(self, bar=True, binning_parameter="Day", **kwargs):
+    def classificationTimeline(self, bar=True, binning_parameter="Day", label=True, **kwargs):
 
         # Get the classification datetimes
         classification_datetimes = pd.to_datetime(self.extracted_dataframe["created_at"])
@@ -610,6 +628,10 @@ class Analyzer:
         binned_datetimes = {k: len(v) for k, v in binned_datetimes.items()}
 
         # Plot the timeline
+        if (label):
+            for key, value in binned_datetimes.items():
+                plt.annotate(str(value), xy=(key, value), ha='center', va='bottom')
+
         if (bar):
             plt.bar(binned_datetimes.keys(), binned_datetimes.values(), **kwargs)
         else:
@@ -619,27 +641,44 @@ class Analyzer:
         plt.ylabel("Count")
         plt.show()
 
+    def getUniqueUserIdentifiers(self, include_logged_out=True, user_identifier="username"):
+        # Note: I tried doing a cross-match between ip addresses and users, but there were no logged-out users
+        # which had the same ip address as a logged-in user. So I don't think its worth the effort to implement.
 
-    def getUniqueUsers(self, include_logged_out=True):
-        if(include_logged_out):
-            return self.extracted_dataframe["user_name"].unique()
+        user_dataframe_key = None
+        if(user_identifier == "username"):
+            user_dataframe_key = "user_name"
+        elif(user_identifier == "user id"):
+            user_dataframe_key = "user_id"
         else:
-            unique_users = self.extracted_dataframe["user_name"].unique()
+            raise ValueError("user_identifier must be either 'username' or 'user id'.")
+
+        if(include_logged_out and user_identifier == "user id"):
+            raise ValueError("Cannot include logged out users when user_identifier is 'user id'.")
+
+        if(include_logged_out):
+            return self.extracted_dataframe[user_dataframe_key].unique()
+        else:
+            unique_users = self.extracted_dataframe[user_dataframe_key].unique()
             logged_in_unique_users = [user for user in unique_users if "not-logged-in" not in user]
             return logged_in_unique_users
 
-    def getTopUsers(self, count_threshold=None, percentile=None):
+    @uses_user_identifiers
+    def getUser(self, user_identifier):
+        return Spout.get_user(user_identifier)
+
+    def getTopUsersDictionary(self, count_threshold=None, percentile=None):
 
         if (count_threshold is None and percentile is None):
             raise ValueError("You must provide either a count_threshold or a percentile.")
         elif(count_threshold is not None and percentile is not None):
             raise ValueError("You cannot provide both a count_threshold and a percentile.")
 
-        unique_users = self.getUniqueUsers()
+        unique_user_identifiers = self.getUniqueUserIdentifiers()
         user_classifications_dict = {}
 
-        for unique_user in unique_users:
-            user_classifications_dict[unique_user] = self.getUserClassificationsCount(unique_user)
+        for unique_user_identifier in unique_user_identifiers:
+            user_classifications_dict[unique_user_identifier] = self.getUserClassificationsTotal(unique_user_identifier)
 
         # Sort the dictionary by the number of classifications
         sorted_user_classifications_dict = {k: v for k, v in sorted(user_classifications_dict.items(), key=lambda item: item[1])}
@@ -664,10 +703,15 @@ class Analyzer:
         for user in sorted_user_classifications_dict:
             if(userMeetsRequirements(user, count_threshold, percentile)):
                 top_users_dict[user] = sorted_user_classifications_dict[user]
+
         return top_users_dict
 
+    def getTopUsers(self, count_threshold=None, percentile=None):
+        top_users_dict = self.getTopUsersDictionary(count_threshold=count_threshold, percentile=percentile)
+        return list(top_users_dict.keys())
+
     def getTopUsersCount(self, count_threshold=None, percentile=None):
-        top_users_dict = self.getTopUsers(count_threshold=count_threshold, percentile=percentile)
+        top_users_dict = self.getTopUsersDictionary(count_threshold=count_threshold, percentile=percentile)
         return len(top_users_dict)
 
     def getSubjectIDs(self):
@@ -684,7 +728,7 @@ class Analyzer:
                 raise ValueError("The subject_id must be an integer.")
 
             if (dataframe_type == "default"):
-                # If default, then return the metadata of the subject as a dataframe
+                # If it is default, then return the metadata of the subject as a dataframe
                 subject_metadata = self.getSubjectMetadata(subject_input)
 
                 if(subject_metadata is None):
@@ -710,7 +754,6 @@ class Analyzer:
 
         return getSubjectDataframeFromID(subject_input, dataframe_type=dataframe_type)
 
-
     def combineSubjectDataframes(self, subject_dataframes: Iterable[pd.DataFrame]) -> pd.DataFrame:
         # Combine a list of subject dataframes into a single dataframe
         if(not isinstance(subject_dataframes, Iterable)):
@@ -724,12 +767,8 @@ class Analyzer:
         subject_dataframe.reset_index(drop=True, inplace=True)
         return subject_dataframe
 
-
     @uses_subject_ids
     def getSubject(self, subject_input) -> Union[panoptes_client.Subject, List[panoptes_client.Subject]]:
-        if(not unWISE_verse.Spout.Panoptes_client.logged_in):
-            raise Exception("You must be logged in to Zooniverse to get a subject object, please call the login() method first or don't pass a subject csv to Analyzer.")
-
         # Get the subject with the given subject ID in the subject set with the given subject set ID
         return Spout.get_subject(subject_input, self.subject_set_id)
 
