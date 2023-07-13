@@ -414,30 +414,63 @@ class Analyzer:
     # Subject classification methods
     @multioutput
     @uses_subject_ids
-    def getClassificationsForSubject(self, subject_input):
-        # Get the subject's dataframe
-        subject_dataframe = self.getSubjectDataframe(subject_input, dataframe_type="reduced")
+    def getClassificationsForSubject(self, subject_input, weighted=False):
 
-        if (len(subject_dataframe) == 0):
-            warnings.warn(f"Subject {subject_input} does not exist, returning None.")
-            return None
+        if(not weighted):
+            subject_dataframe = self.getSubjectDataframe(subject_input, dataframe_type="reduced")
 
-        try:
-            # Try to get the number of "yes" classifications
-            yes_count = int(subject_dataframe["data.yes"].values[0])
-        except ValueError:
-            # If there are no "yes" classifications, then set the count to 0
+            if (len(subject_dataframe) == 0):
+                warnings.warn(f"Subject {subject_input} does not exist, returning None.")
+                return None
+
+            try:
+                # Try to get the number of "yes" classifications
+                yes_count = int(subject_dataframe["data.yes"].values[0])
+            except ValueError:
+                # If there are no "yes" classifications, then set the count to 0
+                yes_count = 0
+
+            try:
+                # Try to get the number of "no" classifications
+                no_count = int(subject_dataframe["data.no"].values[0])
+            except ValueError:
+                # If there are no "no" classifications, then set the count to 0
+                no_count = 0
+
+            classification_dict = {"yes": yes_count, "no": no_count, "total": yes_count + no_count}
+            return classification_dict
+        else:
+            subject_dataframe = self.getSubjectDataframe(subject_input, dataframe_type="extracted")
+
+            if (len(subject_dataframe) == 0):
+                warnings.warn(f"Subject {subject_input} does not exist, returning None.")
+                return None
+
+            if (len(subject_dataframe) == 0):
+                warnings.warn(f"Subject {subject_input} does not exist, returning None.")
+                return None
+
             yes_count = 0
-
-        try:
-            # Try to get the number of "no" classifications
-            no_count = int(subject_dataframe["data.no"].values[0])
-        except ValueError:
-            # If there are no "no" classifications, then set the count to 0
             no_count = 0
+            for index, row in subject_dataframe.iterrows():
+                default_insufficient_classifications = True
+                try:
+                    # Try to get the number of "yes" classifications
+                    yes_count += int(row["data.yes"]) * self.classifier.getUserAccuracy(row["user_name"], default_insufficient_classifications=default_insufficient_classifications)
+                except:
+                    # If there are no "yes" classifications, then set the count to 0
+                    yes_count += 0
+
+
+                try:
+                    # Try to get the number of "no" classifications
+                    no_count += int(row["data.no"]) * self.classifier.getUserAccuracy(row["user_name"], default_insufficient_classifications=default_insufficient_classifications)
+                except:
+                    # If there are no "no" classifications, then set the count to 0
+                    no_count += 0
 
         # Return the dictionary of the number of "yes" and "no" classifications
-        classification_dict = {"yes": yes_count, "no": no_count}
+        classification_dict = {"yes": yes_count, "no": no_count, "total": yes_count + no_count}
         return classification_dict
 
     @multioutput
@@ -1101,32 +1134,31 @@ class Analyzer:
     # Acceptable candidate methods
     @multioutput
     @uses_subject_ids
-    def checkIfCandidateIsAcceptable(self, subject_input, acceptance_ratio=None, acceptance_threshold=0):
+    def checkIfCandidateIsAcceptable(self, subject_input, acceptance_ratio, acceptance_threshold=0, weighted=False):
         subject_type = self.getSubjectType(subject_input)
-        subject_classifications = self.getClassificationsForSubject(subject_input)
+        subject_classifications = self.getClassificationsForSubject(subject_input, weighted=weighted)
 
         if (subject_classifications is None):
             warnings.warn(f"Subject ID {subject_input} was not found, so an acceptable candidate cannot be determined: Returning None")
             return None, None
 
         # Count the number of successful classifications for each of the bitmask types
-        total_classifications = subject_classifications["yes"] + subject_classifications["no"]
+
+        total_classifications = subject_classifications["total"]
         movement_ratio = subject_classifications["yes"] / total_classifications
         non_movement_ratio = subject_classifications["no"] / total_classifications
-
+        print(f"Movement ratio: {movement_ratio}", "Subject Type: ", subject_type)
         if (subject_type == "SMDET Candidate"):
             return (movement_ratio > acceptance_ratio) and (subject_classifications["yes"] > acceptance_threshold), subject_classifications
         else:
             return False, subject_classifications
 
-    def findAcceptableCandidates(self, acceptance_ratio=None, acceptance_threshold=None, save=True):
+    def findAcceptableCandidates(self, acceptance_ratio=None, acceptance_threshold=None, weighted=False, save=True):
         subject_ids = self.getSubjectIDs()
         accepted_subjects = []
 
         for subject_id in subject_ids:
-            acceptable_boolean, subject_classifications_dict = self.checkIfCandidateIsAcceptable(subject_id,
-                                                                                                 acceptance_ratio=acceptance_ratio,
-                                                                                                 acceptance_threshold=acceptance_threshold)
+            acceptable_boolean, subject_classifications_dict = self.checkIfCandidateIsAcceptable(subject_id, acceptance_ratio=acceptance_ratio, acceptance_threshold=acceptance_threshold, weighted=weighted)
 
             if(acceptable_boolean is None or subject_classifications_dict is None):
                 warnings.warn(f"Subject ID {subject_id} was not found, so it cannot be determined if it is an acceptable candidate: Skipping")
@@ -1188,7 +1220,7 @@ class Analyzer:
         return generated_files
 
     # Principle method for getting acceptable candidates and sorting them by database
-    def performCandidatesSort(self, acceptance_ratio=0.5, acceptance_threshold=4, acceptable_candidates_csv=None):
+    def performCandidatesSort(self, acceptance_ratio=0.5, acceptance_threshold=4, weighted=False, acceptable_candidates_csv=None):
         acceptable_candidates = []
         if (acceptable_candidates_csv is not None and os.path.exists(acceptable_candidates_csv)):
             print("Found acceptable candidates file.")
@@ -1196,7 +1228,7 @@ class Analyzer:
             acceptable_candidates = acceptable_candidates_dataframe["subject_id"].values
         elif (acceptable_candidates_csv is None):
             print("No acceptable candidates file found. Generating new one.")
-            acceptable_candidates = self.findAcceptableCandidates(acceptance_ratio=acceptance_ratio, acceptance_threshold=acceptance_threshold)
+            acceptable_candidates = self.findAcceptableCandidates(acceptance_ratio=acceptance_ratio, acceptance_threshold=acceptance_threshold, weighted=weighted)
         elif (not os.path.exists(acceptable_candidates_csv)):
             raise FileNotFoundError(f"Cannot find acceptable candidates file: {acceptable_candidates_csv}")
 
@@ -1315,18 +1347,19 @@ class Analyzer:
 
     @multioutput
     @uses_subject_ids
-    def plotQueriesForSubject(self, subject_input, database_name):
+    def plotQueryForSubject(self, subject_input, database_name, show_in_wiseview=False):
         subject_dataframe = self.getSubjectDataframe(subject_input)
 
         for subject_id in subject_dataframe["subject_id"]:
-            self.showSubjectInWiseView(subject_id, True)
-            if (database_name == "Simbad"):
+            if(show_in_wiseview):
+                self.showSubjectInWiseView(subject_id, True)
+            if (database_name.lower() == "simbad"):
                 query = self.getSimbadQueryForSubject(subject_id, FOV=120 * u.arcsec, plot=True, separation=60 * u.arcsec)
                 print("Simbad: ", query)
-            elif (database_name == "Gaia"):
+            elif (database_name.lower() == "gaia"):
                 query = self.getGaiaQueryForSubject(subject_id, FOV=120 * u.arcsec, plot=True, separation=60 * u.arcsec)
                 print("Gaia: ", query)
-            elif (database_name == "not in either"):
+            elif (database_name.lower() == "not in either"):
                 query = self.getSimbadQueryForSubject(subject_id, FOV=120 * u.arcsec, plot=True, separation=60 * u.arcsec)
                 print("Simbad: ", query)
                 query = self.getGaiaQueryForSubject(subject_id, FOV=120 * u.arcsec, plot=True, separation=60 * u.arcsec)
@@ -1359,45 +1392,46 @@ class Analyzer:
 
 
 class Classifier:
-    def __init__(self, analyzer: Analyzer, include_logged_out_users=True):
+
+    insufficient_classifications_default_accuracy = 0.5
+
+    def __init__(self, analyzer: Analyzer):
         self.user_information = {}
         self.analyzer = analyzer
         print("Calculating user performances...")
-        ignore_warnings(self.calculateAllUserPerformances)(include_logged_out_users=include_logged_out_users)
+        ignore_warnings(self.calculateAllUserPerformances)(include_logged_out_users=True)
         print("User performances calculated.")
 
     @multioutput
     @uses_user_identifiers
-    def getUserAccuracy(self, user_identifier, include_insufficient_classifications=False):
+    def getUserAccuracy(self, user_identifier, default_insufficient_classifications=True):
         if (user_identifier not in self.user_information):
             self.calculateUserPerformance(user_identifier)
 
         user_accuracy = self.user_information[user_identifier]["Performance"]["Accuracy"]
-
-        if (include_insufficient_classifications and user_accuracy is None):
-            return 0.5
+        if (default_insufficient_classifications and user_accuracy is None):
+            return self.insufficient_classifications_default_accuracy
         else:
             return user_accuracy
 
 
     @multioutput
     @uses_user_identifiers
-    def getUserClassifications(self, user_identifier):
+    def getUserVerifiedClassifications(self, user_identifier):
         if (user_identifier not in self.user_information):
             self.calculateUserPerformance(user_identifier)
         return self.user_information[user_identifier]["Classifications"]
 
     @multioutput
     @uses_user_identifiers
-    def getUserInformation(self, user_identifier, include_insufficient_classifications=False):
+    def getUserInformation(self, user_identifier, default_insufficient_classifications=True):
         if (user_identifier not in self.user_information):
             self.calculateUserPerformance(user_identifier)
 
         user_accuracy = self.user_information[user_identifier]["Performance"]["Accuracy"]
-
-        if(include_insufficient_classifications and user_accuracy is None):
-            modified_user_information = self.user_information[user_identifier].copy()
-            modified_user_information["Performance"]["Accuracy"] = 0.5
+        if(default_insufficient_classifications and user_accuracy is None):
+            modified_user_information = copy(self.user_information[user_identifier])
+            modified_user_information["Performance"]["Accuracy"] = self.insufficient_classifications_default_accuracy
             return modified_user_information
         else:
             return self.user_information[user_identifier]
@@ -1453,7 +1487,7 @@ class Classifier:
             # TODO: Investigate Cohen's kappa coefficient for binary classification
             # https://en.wikipedia.org/wiki/Cohen%27s_kappa#:~:text=Cohen's%20kappa%20coefficient%20(%CE%BA%2C%20lowercase,for%20qualitative%20(categorical)%20items.
             # https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3900052/#:~:text=Cohen%20suggested%20the%20Kappa%20result,1.00%20as%20almost%20perfect%20agreement.
-            user_information_dictionary["Performance"] = {"Accuracy": 0.0, "Kappa": 0.0}
+            user_information_dictionary["Performance"] = {"Accuracy": 0.0}
             self.user_information[user_identifier] = user_information_dictionary
 
             total_classifications = 0
@@ -1481,33 +1515,35 @@ class Classifier:
         user_identifiers = self.analyzer.getUniqueUserIdentifiers(user_identifier="username", include_logged_out_users=include_logged_out_users)
         self.calculateUserPerformance(user_identifiers)
 
-    def getAllUserAccuracies(self, include_logged_out_users=False, include_insufficient_classifications=False):
+    def getAllUserAccuracies(self, include_logged_out_users=False, default_insufficient_classifications=True):
         user_identifiers = self.analyzer.getUniqueUserIdentifiers(user_identifier="username", include_logged_out_users=include_logged_out_users)
-        return self.getUserAccuracy(user_identifiers, include_insufficient_classifications=include_insufficient_classifications)
+        return self.getUserAccuracy(user_identifiers, default_insufficient_classifications=default_insufficient_classifications)
 
-    def getAllUserInformation(self, include_logged_out_users=False, include_insufficient_classifications=False):
+    def getAllUserInformation(self, include_logged_out_users=False, default_insufficient_classifications=True):
         user_identifiers = self.analyzer.getUniqueUserIdentifiers(user_identifier="username", include_logged_out_users=include_logged_out_users)
-        user_information_dictionaries = self.getUserInformation(user_identifiers, include_insufficient_classifications=include_insufficient_classifications)
+        user_information_dictionaries = self.getUserInformation(user_identifiers, default_insufficient_classifications=default_insufficient_classifications)
         return {user_identifier: user_information_dictionary for user_identifier, user_information_dictionary  in zip(user_identifiers, user_information_dictionaries)}
 
-    def getMostAccurateUsernames(self, include_logged_out_users=False, include_insufficient_classifications=False, classification_minimum=0):
-        user_information_dictionaries = copy(self.getAllUserInformation(include_logged_out_users=include_logged_out_users, include_insufficient_classifications=include_insufficient_classifications))
-        new_user_information_dictionaries = []
+    def getMostAccurateUsernames(self, include_logged_out_users=False, default_insufficient_classifications=True, classification_minimum=0, verified_classifications_minimum=0, accuracy_threshold=0.0):
+        user_information_dictionaries = copy(self.getAllUserInformation(include_logged_out_users=include_logged_out_users, default_insufficient_classifications=default_insufficient_classifications))
+        new_user_information_dictionaries = copy(user_information_dictionaries)
         for user_identifier in user_information_dictionaries:
-            print(user_identifier)
-            total_classifications = 0
+            total_classifications = self.analyzer.getTotalClassificationsByUser(user_identifier)
+            total_verified_classifications = 0
             for subject_type in user_information_dictionaries[user_identifier]["Classifications"]:
-                total_classifications += user_information_dictionaries[user_identifier]["Classifications"][subject_type]["total"]
-            """
-            if(total_classifications > classification_minimum):
-                del user_information_dictionaries[user_identifier]
-            elif(user_information_dictionaries[user_identifier]["Performance"]["Accuracy"] not is None):
-                del user_information_dictionaries[user_identifier]
-            """
+                total_verified_classifications += user_information_dictionaries[user_identifier]["Classifications"][subject_type]["total"]
 
+            if(total_classifications < classification_minimum):
+                del new_user_information_dictionaries[user_identifier]
+            elif(total_verified_classifications < verified_classifications_minimum):
+                del new_user_information_dictionaries[user_identifier]
+            elif(user_information_dictionaries[user_identifier]["Performance"]["Accuracy"] is None):
+                del new_user_information_dictionaries[user_identifier]
+            elif(user_information_dictionaries[user_identifier]["Performance"]["Accuracy"] < accuracy_threshold):
+                del new_user_information_dictionaries[user_identifier]
 
-        sorted_user_names = sorted(user_information_dictionaries.items(), key=lambda x: x[1]["Performance"]["Accuracy"], reverse=True)
-        return sorted_user_names
+        most_accurate_usernames = [user_identifier for user_identifier in sorted(new_user_information_dictionaries, key=lambda x: new_user_information_dictionaries[x]["Performance"]["Accuracy"], reverse=True)]
+        return most_accurate_usernames
 
 
     @multioutput
@@ -1520,7 +1556,7 @@ class Classifier:
             warnings.warn(f"{user_identifier} has no valid classifications for performance. Skipping plot.")
             return None
 
-        user_classifications = self.getUserClassifications(user_identifier)
+        user_classifications = self.getUserVerifiedClassifications(user_identifier)
         user_classification_dataframe = pd.DataFrame.from_dict(user_classifications,  orient="index")
         user_classification_dataframe = user_classification_dataframe.rename(columns={"success": "Success", "failure": "Failure", "total": "Total"})
         formatted_accuracy = round(100 * user_accuracy, 2)
@@ -1539,15 +1575,15 @@ class Classifier:
         plt.xlabel("Subject Type")
         plt.ylabel("Number of Classifications")
 
-    def plotAllUsersPerformanceHistogram(self, include_logged_out_users=False, include_insufficient_classifications=False, **kwargs):
-        user_accuracies = self.getAllUserAccuracies(include_logged_out_users=include_logged_out_users, include_insufficient_classifications=include_insufficient_classifications)
+    def plotAllUsersPerformanceHistogram(self, include_logged_out_users=False, default_insufficient_classifications=True, **kwargs):
+        user_accuracies = self.getAllUserAccuracies(include_logged_out_users=include_logged_out_users, default_insufficient_classifications=default_insufficient_classifications)
         plt.title("User Performance Histogram")
         self.plotPerformanceHistogram(user_accuracies, **kwargs)
 
-    def plotTopUsersPerformanceHistogram(self, count_threshold=None, percentile=None, include_insufficient_classifications=False, **kwargs):
+    def plotTopUsersPerformanceHistogram(self, count_threshold=None, percentile=None, default_insufficient_classifications=True, **kwargs):
         top_usernames = self.analyzer.getTopUsernames(count_threshold=count_threshold, percentile=percentile)
         print(f"Plotting performance histogram for {len(top_usernames)} users.")
-        top_user_accuracies = self.getUserAccuracy(top_usernames, include_insufficient_classifications=include_insufficient_classifications)
+        top_user_accuracies = self.getUserAccuracy(top_usernames, default_insufficient_classifications=default_insufficient_classifications)
         plt.title("Top User Performance Histogram")
         self.plotPerformanceHistogram(top_user_accuracies, **kwargs)
 
@@ -1558,15 +1594,15 @@ class Classifier:
         accuracy_values = [x for x in accuracies if x is not None]
         bins = kwargs.pop("bins", 20)
         plt.hist(accuracy_values, bins=bins, **kwargs)
-        plt.xlabel("User Accuracy")
-        plt.ylabel("Number of Users")
+        plt.xlabel("User Accuracy", fontsize=14)
+        plt.ylabel("Number of Users", fontsize=14)
 
     @plotting
-    def plotTopUsersPerformances(self, count_threshold=None, percentile=None, include_insufficient_classifications=False, **kwargs):
+    def plotTopUsersPerformances(self, count_threshold=None, percentile=None, default_insufficient_classifications=True, **kwargs):
         top_usernames = self.analyzer.getTopUsernames(count_threshold=count_threshold, percentile=percentile)
         print(f"Plotting performance for {len(top_usernames)} users.")
 
-        top_user_accuracies = self.getUserAccuracy(top_usernames, include_insufficient_classifications=include_insufficient_classifications)
+        top_user_accuracies = self.getUserAccuracy(top_usernames, default_insufficient_classifications=default_insufficient_classifications)
 
         # Sort the accuracies and usernames by accuracy
         top_user_accuracies, top_usernames = zip(*sorted(zip(top_user_accuracies, top_usernames), reverse=True))
@@ -1594,8 +1630,34 @@ class Classifier:
 
         ax.set_xticks(x)
         ax.set_xticklabels(top_usernames, ha='right', va='top', rotation=45, color="black")
-        plt.show()
 
+    @plotting
+    def plotMostAccurateUsers(self,  include_logged_out_users=False, default_insufficient_classifications=True, classification_minimum=0, verified_classifications_minimum=0, accuracy_threshold=0.0, **kwargs):
+        most_accurate_users = self.getMostAccurateUsernames(include_logged_out_users=include_logged_out_users, default_insufficient_classifications=default_insufficient_classifications, classification_minimum=classification_minimum, verified_classifications_minimum=verified_classifications_minimum, accuracy_threshold=accuracy_threshold)
+        print(f"Plotting performance for {len(most_accurate_users)} users.")
+
+        most_accurate_users_accuracies = self.getUserAccuracy(most_accurate_users, default_insufficient_classifications=default_insufficient_classifications)
+
+        # Generate x-coordinates for the bars
+        x = np.arange(len(most_accurate_users_accuracies))
+
+        # Create the bar plot
+        fig, ax = plt.subplots()
+
+        # Set the default title
+        plt.title(f"Most Accurate Users")
+
+        # Set the default y label
+        plt.ylabel("User Accuracy", fontsize=15)
+
+        bars = ax.bar(x, most_accurate_users_accuracies, **kwargs)
+        for i, bar in enumerate(bars):
+            # Display the user's accuracy above the bar
+            offset = 0.01
+            ax.text(bar.get_x() + bar.get_width() / 2, most_accurate_users_accuracies[i] + offset, f"{round(100 * most_accurate_users_accuracies[i], 2)}%", horizontalalignment='center', verticalalignment='bottom', fontsize=10)
+
+        ax.set_xticks(x)
+        ax.set_xticklabels(most_accurate_users, ha='right', va='top', rotation=45, color="black")
 
 
 

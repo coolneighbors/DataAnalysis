@@ -408,6 +408,7 @@ class Searcher(ABC):
 
             def add_source_annotation(sel):
                 if(is_source_point(sel)):
+                    print(f"Currently hovering over: {self.result_table[name_key][sel.target.index]}")
                     sel.annotation.set_text(self.result_table[name_key][sel.target.index])
                     sel.annotation.set_fontsize(source_labels_size)
                     sel.annotation.set_bbox({"boxstyle": "round, pad=0.5", "edgecolor": "black", "facecolor": "white"})
