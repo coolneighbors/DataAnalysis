@@ -27,6 +27,7 @@ from astropy.time import Time
 from typing import List, Dict, Tuple, Union, Optional, TextIO, Any, Callable, Iterable, Set
 from Searcher import SimbadSearcher, GaiaSearcher
 from Plotter import SubjectCSVPlotter
+from Decorators import ignore_warnings, multioutput, plotting
 # TODO: Add a weighting system for users' classifications based on their accuracy on the known subjects
 # TODO: Check hashed IP's to see if they're the same user as a logged-in user for classification counts, etc.
 # TODO: Redo documentation for Analyzer class and add type hints, result hints, and docstrings for all methods
@@ -41,31 +42,16 @@ subjects_typing = Union[str, int, TextIOWrapper, TextIO, pd.DataFrame, Iterable[
 # Processes subject_input into a list of integer subject_ids
 # TODO: Investigate if this can be done better (find first arg which is a list?, keyword arg for input?)
 
-def multioutput(func):
-    @functools.wraps(func)
-    def wrapper(*args, **kwargs):
-        for index, arg in enumerate(args):
-            if(isinstance(arg, Iterable) and not isinstance(arg, str) and not isinstance(arg, TextIOWrapper) and not isinstance(arg, TextIO)):
-                iterable_type = type(arg)
-
-                if(not isinstance(arg, list) and not isinstance(arg, tuple)):
-                    warnings.warn(f"Iterable argument {arg} of type '{iterable_type.__name__}' is not a list or tuple. Returning results as a list.")
-                    iterable_type = list
-
-                before_args = args[:index]
-                after_args = args[index + 1:]
-                return iterable_type([func(*before_args, iterable_argument, *after_args, **kwargs) for iterable_argument in arg])
-
-        return func(*args, **kwargs)
-    return wrapper
-
 def uses_subject_ids(func):
-    func = multioutput(func)
     @functools.wraps(func)
     def conversion_wrapper(*args, **kwargs):
         subject_ids = []
         is_static_method = isinstance(func, staticmethod)
         is_class_method = isinstance(func, classmethod)
+
+        if(kwargs.get("subject_input") is not None):
+            raise ValueError("Keyword argument 'subject_input' is not allowed. Let subject_input be the first positional argument instead.")
+
         if (func.__qualname__.find(".") == -1 or func.__qualname__.find("<locals>") != -1):
             self_or_cls = None
             subject_input = args[0]
@@ -80,7 +66,7 @@ def uses_subject_ids(func):
 
         elif ((isinstance(subject_input, str) and os.path.exists(subject_input)) or isinstance(subject_input, TextIOWrapper) or isinstance(subject_input, TextIO)):
             subject_ids = pd.read_csv(Analyzer.verifyFile(subject_input, ".csv"), usecols=["subject_id"])["subject_id"].tolist()
-        elif(isinstance(subject_input, str) or isinstance(subject_input, int)):
+        elif(isinstance(subject_input, str) or isinstance(subject_input, int) or isinstance(subject_input, np.int64)):
             try:
                 subject_ids = int(subject_input)
             except ValueError:
@@ -142,6 +128,12 @@ def uses_user_identifiers(func):
             return func(self_or_cls, user_identifier, *args, **kwargs)
     return conversion_wrapper
 
+
+def days_since_launch():
+    launch_day = datetime.date(2023, 6, 27)
+    today = datetime.date.today()
+    return (today - launch_day).days + 1
+
 class Analyzer:
     def __init__(self, extracted_file: file_typing, reduced_file: file_typing, subjects_file: Optional[file_typing] = None, save_login: bool = True) -> None:
         # Verify that the extracted_file is a valid file
@@ -163,8 +155,49 @@ class Analyzer:
             self.subject_set_id = None
             self.login(save_login)
 
-    # Helper methods for __init__
+        self.classifier = Classifier(self)
+
+        self.save()
+
+    # Helper methods for Analyzer
     # ------------------------------------------------------------------------------------------------------------------
+
+    def save(self, filename='analyzer.pickle'):
+        """
+        Save the Analyzer object as a pickle file.
+
+        Parameters
+        ----------
+            filename : str
+                A string representing the name of the file to save the Analyzer object as
+                Defaults to 'analyzer.pickle'
+        """
+
+        with open(filename, 'wb') as file:
+            pickle.dump(self, file)
+
+    @staticmethod
+    def load(filename='analyzer.pickle'):
+        """
+        Load an Analyzer object from a pickle file.
+
+        Parameters
+        ----------
+            filename : str
+                A string representing the name of the file to load the Analyzer object from
+                Defaults to 'analyzer.pickle'
+
+        Returns
+        -------
+            analyzer : Analyzer
+                The Analyzer object loaded from the pickle file
+        """
+
+        with open(filename, 'rb') as file:
+            analyzer = pickle.load(file)
+            return analyzer
+
+
 
     @staticmethod
     @multioutput
@@ -235,43 +268,31 @@ class Analyzer:
 
     # Methods related to classifications
     # ------------------------------------------------------------------------------------------------------------------
-
-    # Total, or subset, classification methods
+    # All classifications methods
     def getTotalClassifications(self):
         # Return the number of classifications
         return len(self.extracted_dataframe)
 
+    @plotting
     def plotClassificationDistribution(self, total_subject_count=None, **kwargs):
-        # if title is in kwargs, then remove it and put its value in the title
-        if ("title" in kwargs):
-            plt.title(kwargs["title"])
-            del kwargs["title"]
-        else:
-            plt.title("Classification Distribution")
 
-        if ("xlabel" in kwargs):
-            plt.xlabel(kwargs["xlabel"])
-            del kwargs["xlabel"]
-        else:
-            plt.xlabel("Number of Classifications")
-        if ("ylabel" in kwargs):
-            plt.ylabel(kwargs["ylabel"])
-            del kwargs["ylabel"]
-        else:
-            plt.ylabel("Number of Subjects")
+        # Set the default title
+        plt.title(f"Classification Distribution: Day {days_since_launch()}")
 
-        number_of_classifications_dict = self.getClassificationCountDictionary(total_subject_count)
+        # Set the default x and y labels
+        plt.xlabel("Number of Classifications")
+        plt.ylabel("Number of Subjects")
+
+        number_of_classifications_dict = self.getCountDictionaryOfClassifications(total_subject_count)
 
         plt.bar(number_of_classifications_dict.keys(), number_of_classifications_dict.values(), **kwargs)
 
         for key in number_of_classifications_dict:
-            plt.text(key, number_of_classifications_dict[key], number_of_classifications_dict[key], ha='center',
-                     va='bottom')
+            plt.text(key, number_of_classifications_dict[key], number_of_classifications_dict[key], ha='center', va='bottom')
 
         plt.xticks(range(len(number_of_classifications_dict)))
-        plt.show()
 
-    def computeClassificationTimeStatistics(self):
+    def computeTimeStatisticsForClassifications(self):
 
         # Get the unique usernames
         user_identifiers = self.getUniqueUserIdentifiers(user_identifier="username")
@@ -283,7 +304,7 @@ class Analyzer:
         for user_identifier in user_identifiers:
 
             # Get the user's classifications
-            user_classifications = self.getUserClassifications(user_identifier)
+            user_classifications = self.getClassificationsByUser(user_identifier)
 
             # Convert the created_at column to datetime objects
             user_times = pd.to_datetime(user_classifications["created_at"])
@@ -313,11 +334,11 @@ class Analyzer:
         # Return the average time between classifications for all users
         return users_average_time, users_std_time, users_median_time
 
-    def getClassificationCountDictionary(self, total_subject_count=None):
+    def getCountDictionaryOfClassifications(self, total_subject_count=None):
         subject_ids = self.getSubjectIDs()
         number_of_classifications_dict = {}
         for subject_id in subject_ids:
-            classification_dict = self.getSubjectClassifications(subject_id)
+            classification_dict = self.getClassificationsForSubject(subject_id)
             total_classifications = classification_dict['yes'] + classification_dict['no']
             if (total_classifications in number_of_classifications_dict):
                 number_of_classifications_dict[total_classifications] += 1
@@ -329,13 +350,14 @@ class Analyzer:
         number_of_classifications_dict = dict(sorted(number_of_classifications_dict.items()))
         return number_of_classifications_dict
 
-    def getSubsetClassificationTotal(self, minimum_count=0, total_subject_count=None):
-        classification_count_dict = self.getClassificationCountDictionary(total_subject_count)
+    # Subset of classifications method
+    def getSubsetTotalClassifications(self, minimum_count=0, total_subject_count=None):
+        classification_count_dict = self.getCountDictionaryOfClassifications(total_subject_count)
         return sum(value for key, value in classification_count_dict.items() if key >= minimum_count)
 
     # User classification methods
     @uses_user_identifiers
-    def getUserClassifications(self, user_identifier):
+    def getClassificationsByUser(self, user_identifier):
         # Check if the user_id is a string or an integer
         if (isinstance(user_identifier, str)):
             # If it's a string, then it's a username
@@ -348,17 +370,19 @@ class Analyzer:
 
     @multioutput
     @uses_user_identifiers
-    def getUserClassificationsTotal(self, user_identifier):
+    def getTotalClassificationsByUser(self, user_identifier):
         # Return the number of classifications made by that user
-        return len(self.getUserClassifications(user_identifier))
+        return len(self.getClassificationsByUser(user_identifier))
 
     # Top users classification methods
-    def getTopUsersClassificationsTotal(self, count_threshold=None, percentile=None):
-        top_users_dict = self.getTopUsersDictionary(count_threshold=count_threshold, percentile=percentile)
+    def getTotalClassificationsByTopUsers(self, count_threshold=None, percentile=None):
+        top_users_dict = self.getClassificationDictionaryOfTopUsers(count_threshold=count_threshold,
+                                                                    percentile=percentile)
         return sum(top_users_dict.values())
 
-    def plotTopUsersClassifications(self, count_threshold=None, percentile=None, **kwargs):
-        top_users_dict = self.getTopUsersDictionary(count_threshold=count_threshold, percentile=percentile)
+    @plotting
+    def plotTotalClassificationsByTopUsers(self, count_threshold=None, percentile=None, **kwargs):
+        top_users_dict = self.getClassificationDictionaryOfTopUsers(count_threshold=count_threshold, percentile=percentile)
         # Plot the number of classifications made by each user but stop names from overlapping
         usernames = list(top_users_dict.keys())
         user_counts = list(top_users_dict.values())
@@ -368,40 +392,29 @@ class Analyzer:
         # Create the bar plot
         fig, ax = plt.subplots()
 
-        if ("title" in kwargs):
-            plt.title(kwargs["title"])
-            del kwargs["title"]
-        else:
-            if (percentile is not None):
-                plt.title(f"Users in the Top {100 - percentile}% of Classifications")
-            elif (count_threshold is not None):
-                plt.title(f"Users with More Than {count_threshold} Classifications")
+        # Set the default title
+        if (percentile is not None):
+            plt.title(f"Users in the Top {100 - percentile}% of Classifications")
+        elif (count_threshold is not None):
+            plt.title(f"Users with More Than {count_threshold} Classifications")
 
-        if ("ylabel" in kwargs):
-            plt.ylabel(kwargs["ylabel"])
-            del kwargs["ylabel"]
-        else:
-            plt.ylabel("Number of Classifications", fontsize=15)
+        # Set the default y label
+        plt.ylabel("Number of Classifications", fontsize=15)
 
         bars = ax.bar(x, user_counts, **kwargs)
 
         for i, bar in enumerate(bars):
-            # Display the username below the bar, but angled 45 degrees
-            offset = 0.2
-            ax.text(bar.get_x() + bar.get_width() / 2 + offset, -5, usernames[i], ha='right', va='top', rotation=45)
-
             # Display the user's count
-            ax.text(bar.get_x() + bar.get_width() / 2, user_counts[i] + 10, str(user_counts[i]), horizontalalignment='center', verticalalignment='bottom', fontsize=10)
+            offset = 10
+            ax.text(bar.get_x() + bar.get_width() / 2, user_counts[i] + offset, str(user_counts[i]), horizontalalignment='center', verticalalignment='bottom', fontsize=10)
 
-        # Customize the plot
         ax.set_xticks(x)
-        ax.set_xticklabels([])
-
-        plt.show()
+        ax.set_xticklabels(usernames, ha='right', va='top', rotation=45, color="black")
 
     # Subject classification methods
+    @multioutput
     @uses_subject_ids
-    def getSubjectClassifications(self, subject_input):
+    def getClassificationsForSubject(self, subject_input):
         # Get the subject's dataframe
         subject_dataframe = self.getSubjectDataframe(subject_input, dataframe_type="reduced")
 
@@ -427,11 +440,13 @@ class Analyzer:
         classification_dict = {"yes": yes_count, "no": no_count}
         return classification_dict
 
+    @multioutput
+    @plotting
     @uses_subject_ids
-    def plotSubjectClassifications(self, subject_input):
+    def plotClassificationsForSubject(self, subject_input, **kwargs):
 
         # Get the number of "yes" and "no" classifications for that subject as a dictionary
-        classification_dict = self.getSubjectClassifications(subject_input)
+        classification_dict = self.getClassificationsForSubject(subject_input)
         # Get the number of "yes" and "no" classifications from the dictionary
         yes_count = classification_dict["yes"]
         no_count = classification_dict["no"]
@@ -443,19 +458,24 @@ class Analyzer:
         yes_percent = yes_count / total_count
         no_percent = no_count / total_count
 
+        labels = kwargs.pop("labels", ["Yes", "No"])
+        autopct = kwargs.pop("autopct", '%1.1f%%')
+        loc = kwargs.pop("loc", "upper left")
+
         # Plot the pie chart
-        plt.pie([yes_percent, no_percent], labels=["Yes", "No"], autopct='%1.1f%%')
+        plt.pie([yes_percent, no_percent], labels=labels, autopct=autopct, **kwargs)
         plt.axis('equal')
+
+        # Set the title
         plt.title("Subject ID: " + str(subject_input) + " Classifications")
-        plt.legend([f"{yes_count} Yes classifications", f"{no_count} No classifications"], loc="upper left")
-        plt.show()
+        plt.legend([f"{yes_count} Yes classifications", f"{no_count} No classifications"], loc=loc)
 
     # Classification time statistics methods
     @multioutput
     @uses_user_identifiers
-    def getUserClassificationTimes(self, user_identifier):
+    def getClassificationTimesByUser(self, user_identifier):
         # Get the user's classifications
-        user_classifications = self.getUserClassifications(user_identifier)
+        user_classifications = self.getClassificationsByUser(user_identifier)
         user_classification_times = []
 
         # Convert the created_at column to datetime objects
@@ -489,9 +509,9 @@ class Analyzer:
 
     @multioutput
     @uses_user_identifiers
-    def computeUserClassificationTimeStatistics(self, user_identifier):
+    def computeTimeStatisticsForUser(self, user_identifier):
         # Get the user's classification times
-        user_classification_times = self.getUserClassificationTimes(user_identifier)
+        user_classification_times = self.getClassificationTimesByUser(user_identifier)
 
         if (len(user_classification_times) == 0):
             raise ValueError(f"User with user_identifier {user_identifier} has no classifications or does not exist.")
@@ -502,7 +522,8 @@ class Analyzer:
         # Return the average time between classifications for all users
         return user_average_time, user_std_time, user_median_time
 
-    def computeTimeStatistics(self, classification_times):
+    @staticmethod
+    def computeTimeStatistics(classification_times):
 
         if(len(classification_times) == 0):
             raise ValueError(f"Classification times list is empty.")
@@ -516,7 +537,11 @@ class Analyzer:
         # Return the average time between classifications for a list of user(s) classification times
         return average_time, std_time, median_time
 
-    def plotClassificationTimeHistogram(self, bins=100, hist_range=None, **kwargs):
+    @plotting
+    def plotTimeHistogramForAllClassifications(self, **kwargs):
+
+        bins = kwargs.pop("bins", 100)
+        hist_range = kwargs.pop("range", None)
 
         # Get the unique usernames
         user_identifiers = self.getUniqueUserIdentifiers(user_identifier="username")
@@ -526,7 +551,7 @@ class Analyzer:
         # Iterate over all usernames
         for user_identifier in user_identifiers:
             # Get the user's classification times
-            user_classification_times = self.getUserClassificationTimes(user_identifier)
+            user_classification_times = self.getClassificationTimesByUser(user_identifier)
 
             # Convert the list of lists to a single list
             all_classification_times.extend(user_classification_times)
@@ -550,14 +575,16 @@ class Analyzer:
         plt.xlabel("Time (seconds)")
         plt.ylabel("Counts")
         plt.legend()
-        plt.show()
 
     @multioutput
+    @plotting
     @uses_user_identifiers
-    def plotUserClassificationTimeHistogram(self, user_identifier, bins=100, hist_range=None, **kwargs):
+    def plotTimeHistogramForUserClassifications(self, user_identifier, **kwargs):
+        bins = kwargs.pop("bins", 100)
+        hist_range = kwargs.pop("range", None)
 
         # Initialize the list of classification times
-        user_classification_times = self.getUserClassificationTimes(user_identifier)
+        user_classification_times = self.getClassificationTimesByUser(user_identifier)
 
         if(len(user_classification_times) == 0):
             warnings.warn(f"User with user_identifier '{user_identifier}' has no classification times, cannot plot their classification time histogram.")
@@ -569,11 +596,9 @@ class Analyzer:
         if (hist_range is None):
             hist_range = min(min(user_classification_times), user_average_time - user_std_time), max(max(user_classification_times), user_average_time + user_std_time)
 
-
         # Plot the histogram
         plt.hist(user_classification_times, bins=bins, range=hist_range, **kwargs)
 
-        users_average_time = sum(user_classification_times) / len(user_classification_times)
         plt.axvline(user_average_time, color='red', linestyle='solid', linewidth=1, label=f"Average: {round(user_average_time, 2)} seconds")
 
         plt.axvline(user_average_time + user_std_time, color='red', linestyle='dashed', linewidth=1, label=f"Average ± Standard Deviation: {round(user_average_time, 2)} ± {round(user_std_time, 2)} seconds")
@@ -585,9 +610,9 @@ class Analyzer:
         plt.xlabel("Time (seconds)")
         plt.ylabel("Counts")
         plt.legend()
-        plt.show()
 
-    def classificationTimeline(self, bar=True, binning_parameter="Day", label=True, **kwargs):
+    @plotting
+    def plotClassificationTimeline(self, bar=True, binning_parameter="Day", label=True, **kwargs):
 
         # Get the classification datetimes
         classification_datetimes = pd.to_datetime(self.extracted_dataframe["created_at"])
@@ -639,9 +664,11 @@ class Analyzer:
         plt.title("Classification Timeline")
         plt.xlabel(binning_parameter)
         plt.ylabel("Count")
-        plt.show()
 
-    def getUniqueUserIdentifiers(self, include_logged_out=True, user_identifier="username"):
+    # Methods related to users
+    # ------------------------------------------------------------------------------------------------------------------
+    # Principle method for getting users
+    def getUniqueUserIdentifiers(self, include_logged_out_users=True, user_identifier="username"):
         # Note: I tried doing a cross-match between ip addresses and users, but there were no logged-out users
         # which had the same ip address as a logged-in user. So I don't think its worth the effort to implement.
 
@@ -653,32 +680,35 @@ class Analyzer:
         else:
             raise ValueError("user_identifier must be either 'username' or 'user id'.")
 
-        if(include_logged_out and user_identifier == "user id"):
+        if(include_logged_out_users and user_identifier == "user id"):
             raise ValueError("Cannot include logged out users when user_identifier is 'user id'.")
 
-        if(include_logged_out):
-            return self.extracted_dataframe[user_dataframe_key].unique()
+        if(include_logged_out_users):
+            return list(self.extracted_dataframe[user_dataframe_key].unique())
         else:
-            unique_users = self.extracted_dataframe[user_dataframe_key].unique()
+            unique_users = list(self.extracted_dataframe[user_dataframe_key].unique())
             logged_in_unique_users = [user for user in unique_users if "not-logged-in" not in user]
             return logged_in_unique_users
 
+    # Spout-interface method
+    @multioutput
     @uses_user_identifiers
     def getUser(self, user_identifier):
         return Spout.get_user(user_identifier)
 
-    def getTopUsersDictionary(self, count_threshold=None, percentile=None):
+    # Methods related to top users
+    def getClassificationDictionaryOfTopUsers(self, count_threshold=None, percentile=None):
 
         if (count_threshold is None and percentile is None):
             raise ValueError("You must provide either a count_threshold or a percentile.")
         elif(count_threshold is not None and percentile is not None):
             raise ValueError("You cannot provide both a count_threshold and a percentile.")
 
-        unique_user_identifiers = self.getUniqueUserIdentifiers()
+        unique_user_identifiers = self.getUniqueUserIdentifiers(user_identifier="username")
         user_classifications_dict = {}
 
         for unique_user_identifier in unique_user_identifiers:
-            user_classifications_dict[unique_user_identifier] = self.getUserClassificationsTotal(unique_user_identifier)
+            user_classifications_dict[unique_user_identifier] = self.getTotalClassificationsByUser(unique_user_identifier)
 
         # Sort the dictionary by the number of classifications
         sorted_user_classifications_dict = {k: v for k, v in sorted(user_classifications_dict.items(), key=lambda item: item[1])}
@@ -706,21 +736,38 @@ class Analyzer:
 
         return top_users_dict
 
-    def getTopUsers(self, count_threshold=None, percentile=None):
-        top_users_dict = self.getTopUsersDictionary(count_threshold=count_threshold, percentile=percentile)
-        return list(top_users_dict.keys())
+    def getTopUsernames(self, count_threshold=None, percentile=None):
+        top_usernames_dict = self.getClassificationDictionaryOfTopUsers(count_threshold=count_threshold, percentile=percentile)
+        return list(top_usernames_dict.keys())
 
-    def getTopUsersCount(self, count_threshold=None, percentile=None):
-        top_users_dict = self.getTopUsersDictionary(count_threshold=count_threshold, percentile=percentile)
+    def getTopUsernamesCount(self, count_threshold=None, percentile=None):
+        top_users_dict = self.getClassificationDictionaryOfTopUsers(count_threshold=count_threshold,percentile=percentile)
         return len(top_users_dict)
 
+    def getTopUsers(self, count_threshold=None, percentile=None):
+        top_usernames = self.getTopUsernames(count_threshold=count_threshold, percentile=percentile)
+        return self.getUser(top_usernames)
+
+    # Methods related to subjects and subject metadata
+    # ------------------------------------------------------------------------------------------------------------------
+    # Principle method for getting subjects
     def getSubjectIDs(self):
         # Return the list of subject IDs
-        return self.reduced_dataframe["subject_id"].values
+        return [int(subject_id) for subject_id in self.reduced_dataframe["subject_id"].values]
 
+    # Spout-interface method
+    @multioutput
+    @uses_subject_ids
+    def getSubject(self, subject_input) -> Union[panoptes_client.Subject, List[panoptes_client.Subject]]:
+        # Get the subject with the given subject ID in the subject set with the given subject set ID
+        return Spout.get_subject(subject_input, self.subject_set_id)
+
+    # Subject dataframe methods
+    @multioutput
     @uses_subject_ids
     def getSubjectDataframe(self, subject_input: subjects_typing, dataframe_type: str = "default") -> Union[pd.DataFrame, List[pd.DataFrame]]:
 
+        @multioutput
         @uses_subject_ids
         def getSubjectDataframeFromID(subject_input, dataframe_type: str = "default") -> pd.DataFrame:
 
@@ -754,7 +801,8 @@ class Analyzer:
 
         return getSubjectDataframeFromID(subject_input, dataframe_type=dataframe_type)
 
-    def combineSubjectDataframes(self, subject_dataframes: Iterable[pd.DataFrame]) -> pd.DataFrame:
+    @staticmethod
+    def combineSubjectDataframes(subject_dataframes: Iterable[pd.DataFrame]) -> pd.DataFrame:
         # Combine a list of subject dataframes into a single dataframe
         if(not isinstance(subject_dataframes, Iterable)):
             if(isinstance(subject_dataframes, pd.DataFrame)):
@@ -767,11 +815,19 @@ class Analyzer:
         subject_dataframe.reset_index(drop=True, inplace=True)
         return subject_dataframe
 
+    # Subject metadata methods
+    @multioutput
     @uses_subject_ids
-    def getSubject(self, subject_input) -> Union[panoptes_client.Subject, List[panoptes_client.Subject]]:
-        # Get the subject with the given subject ID in the subject set with the given subject set ID
-        return Spout.get_subject(subject_input, self.subject_set_id)
+    def checkIfSubjectExists(self, subject_input):
 
+        # Get the subject's metadata
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            metadata = self.getSubjectMetadata(subject_input)
+            return metadata is not None
+
+    @multioutput
     @uses_subject_ids
     def getSubjectMetadata(self, subject_input):
 
@@ -792,6 +848,7 @@ class Analyzer:
                 warnings.warn(f"Subject ID {subject_input} was not found: Returning None")
                 return None
 
+    @multioutput
     @uses_subject_ids
     def getSubjectMetadataField(self, subject_input, field_name):
         # Get the subject metadata for the subject with the given subject ID
@@ -810,8 +867,10 @@ class Analyzer:
         else:
             return field_value
 
+    # Subject WiseView image method
+    @multioutput
     @uses_subject_ids
-    def showSubject(self, subject_input, open_in_browser=False):
+    def showSubjectInWiseView(self, subject_input, open_in_browser=False):
 
         # Get the WiseView link for the subject with the given subject ID
         wise_view_link = self.getSubjectMetadataField(subject_input, "WISEVIEW")
@@ -835,8 +894,10 @@ class Analyzer:
         # Return the WiseView link
         return wise_view_link
 
+    # Subject SIMBAD link method
+    @multioutput
     @uses_subject_ids
-    def getSimbadLink(self, subject_input):
+    def getSimbadLinkForSubject(self, subject_input):
 
         simbad_link = self.getSubjectMetadataField(subject_input, "SIMBAD")
 
@@ -850,8 +911,12 @@ class Analyzer:
 
         return simbad_link
 
+    # Methods related to database queries
+    # ------------------------------------------------------------------------------------------------------------------
+    # SIMBAD query methods
+    @multioutput
     @uses_subject_ids
-    def getSimbadQuery(self, subject_input, search_type="Box Search", FOV=120*u.arcsec, radius=60*u.arcsec, plot=False, separation=None):
+    def getSimbadQueryForSubject(self, subject_input, search_type="Box Search", FOV=120*u.arcsec, radius=60*u.arcsec, plot=False, separation=None):
         subject_metadata = self.getSubjectMetadata(subject_input)
 
         if(subject_metadata is None):
@@ -878,8 +943,9 @@ class Analyzer:
 
         return result
 
+    @multioutput
     @uses_subject_ids
-    def getConditionalSimbadQuery(self, subject_input, search_type="Box Search", FOV=120*u.arcsec, radius=60*u.arcsec, otypes=["BD*", "BD?", "BrownD*", "BrownD?", "BrownD*_Candidate", "PM*"], plot=False, separation=None):
+    def getConditionalSimbadQueryForSubject(self, subject_input, search_type="Box Search", FOV=120*u.arcsec, radius=60*u.arcsec, otypes=["BD*", "BD?", "BrownD*", "BrownD?", "BrownD*_Candidate", "PM*"], plot=False, separation=None):
         subject_metadata = self.getSubjectMetadata(subject_input)
 
         if (subject_metadata is None):
@@ -916,13 +982,16 @@ class Analyzer:
 
         return result
 
+    @multioutput
     @uses_subject_ids
-    def sourceExistsInSimbad(self, subject_input, search_type="Box Search", FOV=120*u.arcsec, radius=60*u.arcsec):
+    def sourceExistsInSimbadForSubject(self, subject_input, search_type="Box Search", FOV=120*u.arcsec, radius=60*u.arcsec):
 
-        return len(self.getSimbadQuery(subject_input, search_type=search_type, FOV=FOV, radius=radius)) > 0
+        return len(self.getSimbadQueryForSubject(subject_input, search_type=search_type, FOV=FOV, radius=radius)) > 0
 
+    # Gaia query methods
+    @multioutput
     @uses_subject_ids
-    def getGaiaQuery(self, subject_input, search_type="Box Search", FOV=120*u.arcsec, radius=60*u.arcsec, plot=False, separation=None):
+    def getGaiaQueryForSubject(self, subject_input, search_type="Box Search", FOV=120*u.arcsec, radius=60*u.arcsec, plot=False, separation=None):
         # Get the subject's metadata
         subject_metadata = self.getSubjectMetadata(subject_input)
 
@@ -950,8 +1019,9 @@ class Analyzer:
 
         return result
 
+    @multioutput
     @uses_subject_ids
-    def getConditionalGaiaQuery(self, subject_input, search_type="Box Search", FOV=120*u.arcsec, radius=60*u.arcsec, gaia_pm=100 * u.mas / u.yr, plot=False, separation=None):
+    def getConditionalGaiaQueryForSubject(self, subject_input, search_type="Box Search", FOV=120*u.arcsec, radius=60*u.arcsec, gaia_pm=100 * u.mas / u.yr, plot=False, separation=None):
         subject_metadata = self.getSubjectMetadata(subject_input)
 
         if (subject_metadata is None):
@@ -988,24 +1058,18 @@ class Analyzer:
 
         return result
 
-    @uses_subject_ids
-    def sourceExistsInGaia(self, subject_input, search_type="Box Search", FOV=120*u.arcsec, radius=60*u.arcsec):
-
-        return len(self.getGaiaQuery(subject_input, search_type=search_type, FOV=FOV, radius=radius)) > 0
-
-    @uses_subject_ids
-    def subjectExists(self, subject_input):
-
-        # Get the subject's metadata
-
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            metadata = self.getSubjectMetadata(subject_input)
-            return metadata is not None
-
     @multioutput
+    @uses_subject_ids
+    def sourceExistsInGaiaForSubject(self, subject_input, search_type="Box Search", FOV=120*u.arcsec, radius=60*u.arcsec):
+
+        return len(self.getGaiaQueryForSubject(subject_input, search_type=search_type, FOV=FOV, radius=radius)) > 0
+
+    # Methods related to selecting acceptable subjects as candidates for review
+    # ------------------------------------------------------------------------------------------------------------------
+    # Subject type methods
     @staticmethod
-    def bitmaskToType(bitmask):
+    @multioutput
+    def bitmaskToSubjectType(bitmask):
 
         # Convert the bitmask to an integer
         try:
@@ -1019,6 +1083,7 @@ class Analyzer:
         # Return the bitmask type associated with the bitmask value
         return bitmask_dict.get(bitmask, None)
 
+    @multioutput
     @uses_subject_ids
     def getSubjectType(self, subject_input):
         # Get the bitmask for the subject
@@ -1029,14 +1094,16 @@ class Analyzer:
             return None
 
         # Convert the bitmask to a subject type
-        bitmask_type = Analyzer.bitmaskToType(bitmask)
+        subject_type = Analyzer.bitmaskToSubjectType(bitmask)
 
-        return bitmask_type
+        return subject_type
 
+    # Acceptable candidate methods
+    @multioutput
     @uses_subject_ids
-    def isAcceptableCandidate(self, subject_input, acceptance_ratio=None, acceptance_threshold=0):
+    def checkIfCandidateIsAcceptable(self, subject_input, acceptance_ratio=None, acceptance_threshold=0):
         subject_type = self.getSubjectType(subject_input)
-        subject_classifications = self.getSubjectClassifications(subject_input)
+        subject_classifications = self.getClassificationsForSubject(subject_input)
 
         if (subject_classifications is None):
             warnings.warn(f"Subject ID {subject_input} was not found, so an acceptable candidate cannot be determined: Returning None")
@@ -1057,7 +1124,9 @@ class Analyzer:
         accepted_subjects = []
 
         for subject_id in subject_ids:
-            acceptable_boolean, subject_classifications_dict = self.isAcceptableCandidate(subject_id, acceptance_ratio=acceptance_ratio, acceptance_threshold=acceptance_threshold)
+            acceptable_boolean, subject_classifications_dict = self.checkIfCandidateIsAcceptable(subject_id,
+                                                                                                 acceptance_ratio=acceptance_ratio,
+                                                                                                 acceptance_threshold=acceptance_threshold)
 
             if(acceptable_boolean is None or subject_classifications_dict is None):
                 warnings.warn(f"Subject ID {subject_id} was not found, so it cannot be determined if it is an acceptable candidate: Skipping")
@@ -1069,18 +1138,19 @@ class Analyzer:
 
         if(save):
             acceptable_candidates_dataframe = self.combineSubjectDataframes(self.getSubjectDataframe(accepted_subjects))
-            Analyzer.saveSubjectDataframe(acceptable_candidates_dataframe, f"acceptable_candidates_acceptance_ratio_{acceptance_ratio}_acceptance_threshold_{acceptance_threshold}.csv")
+            Analyzer.saveSubjectDataframeToFile(acceptable_candidates_dataframe,
+                                                f"acceptable_candidates_acceptance_ratio_{acceptance_ratio}_acceptance_threshold_{acceptance_threshold}.csv")
 
         return accepted_subjects
 
-    def checkAcceptableCandidates(self, accepted_subjects):
+    def sortAcceptableCandidatesByDatabase(self, accepted_subjects):
         not_in_simbad_subjects = []
         not_in_gaia_subjects = []
         not_in_either_subjects = []
 
         for index, subject_id in enumerate(accepted_subjects):
             print("Checking subject " + str(subject_id) + f" ({index + 1} out of {len(accepted_subjects)})")
-            database_check_dict, database_query_dict = self.checkSubjectFieldOfView(subject_id)
+            database_check_dict, database_query_dict = self.checkSubjectFOV(subject_id)
             no_database = not any(database_check_dict.values())
             if (no_database):
                 print(f"Subject {subject_id} is not in either database.")
@@ -1110,18 +1180,19 @@ class Analyzer:
         not_in_gaia_subjects_dataframe = self.combineSubjectDataframes(not_in_gaia_subject_dataframes)
         not_in_either_subjects_dataframe = self.combineSubjectDataframes(not_in_either_subject_dataframes)
 
-        self.saveSubjectDataframe(not_in_simbad_subjects_dataframe, "not_in_simbad_subjects.csv")
-        self.saveSubjectDataframe(not_in_gaia_subjects_dataframe, "not_in_gaia_subjects.csv")
-        self.saveSubjectDataframe(not_in_either_subjects_dataframe, "not_in_either_subjects.csv")
+        self.saveSubjectDataframeToFile(not_in_simbad_subjects_dataframe, "not_in_simbad_subjects.csv")
+        self.saveSubjectDataframeToFile(not_in_gaia_subjects_dataframe, "not_in_gaia_subjects.csv")
+        self.saveSubjectDataframeToFile(not_in_either_subjects_dataframe, "not_in_either_subjects.csv")
 
         generated_files = ["not_in_simbad_subjects.csv", "not_in_gaia_subjects.csv", "not_in_either_subjects.csv"]
         return generated_files
 
-    def runAcceptableCandidateCheck(self, acceptance_ratio=0.5, acceptance_threshold=4, acceptable_candidates_csv=None):
+    # Principle method for getting acceptable candidates and sorting them by database
+    def performCandidatesSort(self, acceptance_ratio=0.5, acceptance_threshold=4, acceptable_candidates_csv=None):
         acceptable_candidates = []
         if (acceptable_candidates_csv is not None and os.path.exists(acceptable_candidates_csv)):
             print("Found acceptable candidates file.")
-            acceptable_candidates_dataframe = self.loadSubjectDataframe(acceptable_candidates_csv)
+            acceptable_candidates_dataframe = self.loadSubjectDataframeFromFile(acceptable_candidates_csv)
             acceptable_candidates = acceptable_candidates_dataframe["subject_id"].values
         elif (acceptable_candidates_csv is None):
             print("No acceptable candidates file found. Generating new one.")
@@ -1129,15 +1200,17 @@ class Analyzer:
         elif (not os.path.exists(acceptable_candidates_csv)):
             raise FileNotFoundError(f"Cannot find acceptable candidates file: {acceptable_candidates_csv}")
 
-        generated_files = self.checkAcceptableCandidates(acceptable_candidates)
+        generated_files = self.sortAcceptableCandidatesByDatabase(acceptable_candidates)
         print("Generated files: " + str(generated_files))
 
+    # FOV search and checking methods
+    @multioutput
     @uses_subject_ids
-    def searchSubjectFieldOfView(self, subject_id):
+    def searchSubjectFOV(self, subject_input):
 
         FOV = 120 * u.arcsec
 
-        database_check_dict = {"Simbad": self.sourceExistsInSimbad(subject_id, search_type="Box Search", FOV=FOV), "Gaia": self.sourceExistsInGaia(subject_id, search_type="Box Search", FOV=FOV)}
+        database_check_dict = {"Simbad": self.sourceExistsInSimbadForSubject(subject_input, search_type="Box Search", FOV=FOV), "Gaia": self.sourceExistsInGaiaForSubject(subject_input, search_type="Box Search", FOV=FOV)}
 
         # For each database, check if the subject's FOV search area has any known objects in it
         if(any(database_check_dict.values())):
@@ -1145,11 +1218,12 @@ class Analyzer:
         else:
             return False, database_check_dict
 
+    @multioutput
     @uses_subject_ids
-    def checkSubjectFieldOfView(self, subject_id, otypes=["BD*", "BD?", "BrownD*", "BrownD?", "BrownD*_Candidate", "PM*"], gaia_pm=100 * u.mas / u.yr):
+    def checkSubjectFOV(self, subject_input, otypes=["BD*", "BD?", "BrownD*", "BrownD?", "BrownD*_Candidate", "PM*"], gaia_pm=100 * u.mas / u.yr):
 
-        simbad_query = self.getConditionalSimbadQuery(subject_id, search_type="Box Search", FOV=120*u.arcsec, otypes=otypes)
-        gaia_query = self.getConditionalGaiaQuery(subject_id, search_type="Box Search", FOV=120*u.arcsec, gaia_pm=gaia_pm)
+        simbad_query = self.getConditionalSimbadQueryForSubject(subject_input, search_type="Box Search", FOV=120 * u.arcsec, otypes=otypes)
+        gaia_query = self.getConditionalGaiaQueryForSubject(subject_input, search_type="Box Search", FOV=120 * u.arcsec, gaia_pm=gaia_pm)
 
         database_query_dict = {"SIMBAD": simbad_query, "Gaia": gaia_query}
         database_check_dict = {}
@@ -1162,7 +1236,8 @@ class Analyzer:
 
         return database_check_dict, database_query_dict
 
-    def determineAcceptanceCounts(self, acceptance_ratio):
+    # Acceptance counts method
+    def calculateAcceptanceCountsBySubjectType(self, acceptance_ratio):
 
         # Get the subject IDs
         subject_ids = self.getSubjectIDs()
@@ -1187,7 +1262,7 @@ class Analyzer:
             success_count_dict[subject_type]["total"] += 1
 
             # Get the subject classifications
-            subject_classifications = self.getSubjectClassifications(subject_id)
+            subject_classifications = self.getClassificationsForSubject(subject_id)
 
             # Count the number of successful classifications for each of the bitmask types
             total_classifications = subject_classifications["yes"] + subject_classifications["no"]
@@ -1211,14 +1286,15 @@ class Analyzer:
         # Return the success count dictionary
         return success_count_dict
 
+    # Helper methods for saving and loading subject dataframes as needed
     @staticmethod
-    def saveSubjectDataframe(subject_dataframe, filename):
+    def saveSubjectDataframeToFile(subject_dataframe, filename):
 
         # Save the subject dataframe to a CSV file
         subject_dataframe.to_csv(filename, index=False)
 
     @staticmethod
-    def loadSubjectDataframe(filename):
+    def loadSubjectDataframeFromFile(filename):
 
         # Load the subject dataframe from a CSV file
         subject_dataframe = pd.read_csv(filename)
@@ -1226,8 +1302,10 @@ class Analyzer:
         # Return the subject dataframe
         return subject_dataframe
 
+    # Methods related to plotting subjects
+    # ------------------------------------------------------------------------------------------------------------------
     @uses_subject_ids
-    def plotSubjectsSkyMap(self, subject_input: subjects_typing):
+    def plotSkyMapForSubjects(self, subject_input: subjects_typing):
         subject_dataframes = self.getSubjectDataframe(subject_input)
         subject_dataframe = self.combineSubjectDataframes(subject_dataframes)
         subject_dataframe.to_csv("temp.csv", index=False)
@@ -1235,23 +1313,295 @@ class Analyzer:
         subject_csv_plotter.plot()
         os.remove("temp.csv")
 
+    @multioutput
     @uses_subject_ids
-    def plotConditionalQueries(self, subject_input, database_name):
-        subject_dataframes = self.getSubjectDataframe(subject_input)
-        subject_dataframe = self.combineSubjectDataframes(subject_dataframes)
+    def plotQueriesForSubject(self, subject_input, database_name):
+        subject_dataframe = self.getSubjectDataframe(subject_input)
 
         for subject_id in subject_dataframe["subject_id"]:
-            self.showSubject(subject_id, True)
+            self.showSubjectInWiseView(subject_id, True)
             if (database_name == "Simbad"):
-                query = self.getConditionalSimbadQuery(subject_id, FOV=120 * u.arcsec, separation=60 * u.arcsec, plot=True)
-            elif (database_name == "Gaia"):
-                query = self.getConditionalGaiaQuery(subject_id, FOV=120 * u.arcsec, separation=60 * u.arcsec, plot=True)
-            elif (database_name == "not in either"):
-                query = self.getConditionalSimbadQuery(subject_id, FOV=120 * u.arcsec, separation=60 * u.arcsec, plot=True)
+                query = self.getSimbadQueryForSubject(subject_id, FOV=120 * u.arcsec, plot=True, separation=60 * u.arcsec)
                 print("Simbad: ", query)
-                query = self.getConditionalGaiaQuery(subject_id, FOV=120 * u.arcsec, separation=60 * u.arcsec, plot=True)
+            elif (database_name == "Gaia"):
+                query = self.getGaiaQueryForSubject(subject_id, FOV=120 * u.arcsec, plot=True, separation=60 * u.arcsec)
+                print("Gaia: ", query)
+            elif (database_name == "not in either"):
+                query = self.getSimbadQueryForSubject(subject_id, FOV=120 * u.arcsec, plot=True, separation=60 * u.arcsec)
+                print("Simbad: ", query)
+                query = self.getGaiaQueryForSubject(subject_id, FOV=120 * u.arcsec, plot=True, separation=60 * u.arcsec)
                 print("Gaia: ", query)
             else:
                 raise ValueError("Invalid database name.")
+
+    @multioutput
+    @uses_subject_ids
+    def plotConditionalQueriesForSubject(self, subject_input, database_name):
+        subject_dataframe = self.getSubjectDataframe(subject_input)
+
+        for subject_id in subject_dataframe["subject_id"]:
+            self.showSubjectInWiseView(subject_id, True)
+            if (database_name == "Simbad"):
+                query = self.getConditionalSimbadQueryForSubject(subject_id, FOV=120 * u.arcsec, plot=True,
+                                                                 separation=60 * u.arcsec)
+            elif (database_name == "Gaia"):
+                query = self.getConditionalGaiaQueryForSubject(subject_id, FOV=120 * u.arcsec, plot=True,
+                                                               separation=60 * u.arcsec)
+            elif (database_name == "not in either"):
+                query = self.getConditionalSimbadQueryForSubject(subject_id, FOV=120 * u.arcsec, plot=True,
+                                                                 separation=60 * u.arcsec)
+                print("Simbad: ", query)
+                query = self.getConditionalGaiaQueryForSubject(subject_id, FOV=120 * u.arcsec, plot=True,
+                                                               separation=60 * u.arcsec)
+                print("Gaia: ", query)
+            else:
+                raise ValueError("Invalid database name.")
+
+
+class Classifier:
+    def __init__(self, analyzer: Analyzer, include_logged_out_users=True):
+        self.user_information = {}
+        self.analyzer = analyzer
+        print("Calculating user performances...")
+        ignore_warnings(self.calculateAllUserPerformances)(include_logged_out_users=include_logged_out_users)
+        print("User performances calculated.")
+
+    @multioutput
+    @uses_user_identifiers
+    def getUserAccuracy(self, user_identifier, include_insufficient_classifications=False):
+        if (user_identifier not in self.user_information):
+            self.calculateUserPerformance(user_identifier)
+
+        user_accuracy = self.user_information[user_identifier]["Performance"]["Accuracy"]
+
+        if (include_insufficient_classifications and user_accuracy is None):
+            return 0.5
+        else:
+            return user_accuracy
+
+
+    @multioutput
+    @uses_user_identifiers
+    def getUserClassifications(self, user_identifier):
+        if (user_identifier not in self.user_information):
+            self.calculateUserPerformance(user_identifier)
+        return self.user_information[user_identifier]["Classifications"]
+
+    @multioutput
+    @uses_user_identifiers
+    def getUserInformation(self, user_identifier, include_insufficient_classifications=False):
+        if (user_identifier not in self.user_information):
+            self.calculateUserPerformance(user_identifier)
+
+        user_accuracy = self.user_information[user_identifier]["Performance"]["Accuracy"]
+
+        if(include_insufficient_classifications and user_accuracy is None):
+            modified_user_information = self.user_information[user_identifier].copy()
+            modified_user_information["Performance"]["Accuracy"] = 0.5
+            return modified_user_information
+        else:
+            return self.user_information[user_identifier]
+
+    @multioutput
+    @uses_user_identifiers
+    def calculateUserPerformance(self, user_identifier):
+        user_classifications_dataframe = self.analyzer.getClassificationsByUser(user_identifier)
+        user_information_dictionary = {"Classifications": {}}
+
+        verified_subject_types = {"Known Brown Dwarf": True, "Quasar": False, "Random Sky Location": False}
+        verified_subject_performance_scales = {"Known Brown Dwarf": 1, "Quasar": 1, "Random Sky Location": 1}
+        for verified_subject_type in verified_subject_types:
+            user_information_dictionary["Classifications"][verified_subject_type] = {"total": 0, "success": 0, "failure": 0}
+
+        for index in user_classifications_dataframe.index:
+            subject_id = user_classifications_dataframe["subject_id"][index]
+
+            subject_type = self.analyzer.getSubjectType(subject_id)
+
+            if (subject_type is None):
+                warnings.warn("Subject type is None for subject ID: " + str(subject_id))
+                continue
+
+            try:
+                # Try to get the number of "yes" classifications
+                yes_count = int(user_classifications_dataframe["data.yes"][index])
+            except ValueError:
+                # If there are no "yes" classifications, then set the count to 0
+                yes_count = 0
+
+            try:
+                # Try to get the number of "no" classifications
+                no_count = int(user_classifications_dataframe["data.no"][index])
+            except ValueError:
+                # If there are no "no" classifications, then set the count to 0
+                no_count = 0
+
+            classification_dict = {"yes": bool(yes_count), "no": bool(no_count)}
+
+            if(subject_type not in verified_subject_types):
+                continue
+            else:
+                user_information_dictionary["Classifications"][subject_type]["total"] += 1
+                should_be_mover = verified_subject_types[subject_type]
+
+                if(should_be_mover == classification_dict["yes"]):
+                    user_information_dictionary["Classifications"][subject_type]["success"] += 1
+                else:
+                    user_information_dictionary["Classifications"][subject_type]["failure"] += 1
+
+        if(user_identifier not in self.user_information):
+            # TODO: Investigate Cohen's kappa coefficient for binary classification
+            # https://en.wikipedia.org/wiki/Cohen%27s_kappa#:~:text=Cohen's%20kappa%20coefficient%20(%CE%BA%2C%20lowercase,for%20qualitative%20(categorical)%20items.
+            # https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3900052/#:~:text=Cohen%20suggested%20the%20Kappa%20result,1.00%20as%20almost%20perfect%20agreement.
+            user_information_dictionary["Performance"] = {"Accuracy": 0.0, "Kappa": 0.0}
+            self.user_information[user_identifier] = user_information_dictionary
+
+            total_classifications = 0
+            for subject_type in user_information_dictionary["Classifications"]:
+                total_classifications += user_information_dictionary["Classifications"][subject_type]["total"]
+
+            # Calculate the accuracy
+            if (total_classifications == 0):
+                warnings.warn(f"{user_identifier} has no valid classifications for performance. Setting accuracy as None")
+                self.user_information[user_identifier]["Performance"]["Accuracy"] = None
+            else:
+                successful_ratio_total = 0.0
+                subject_type_scaling_total = 0.0
+                for subject_type in verified_subject_types:
+                    if(user_information_dictionary["Classifications"][subject_type]["total"] == 0):
+                        continue
+                    elif(verified_subject_performance_scales[subject_type] != 0):
+                        successful_ratio_total += float(verified_subject_performance_scales[subject_type]) * float(user_information_dictionary["Classifications"][subject_type]["success"]) / float(user_information_dictionary["Classifications"][subject_type]["total"])
+                        subject_type_scaling_total += float(verified_subject_performance_scales[subject_type])
+                self.user_information[user_identifier]["Performance"]["Accuracy"] = successful_ratio_total / subject_type_scaling_total
+        else:
+            raise ValueError(f"User identifier {user_identifier} already exists in user performance dictionary.")
+
+    def calculateAllUserPerformances(self, include_logged_out_users=False):
+        user_identifiers = self.analyzer.getUniqueUserIdentifiers(user_identifier="username", include_logged_out_users=include_logged_out_users)
+        self.calculateUserPerformance(user_identifiers)
+
+    def getAllUserAccuracies(self, include_logged_out_users=False, include_insufficient_classifications=False):
+        user_identifiers = self.analyzer.getUniqueUserIdentifiers(user_identifier="username", include_logged_out_users=include_logged_out_users)
+        return self.getUserAccuracy(user_identifiers, include_insufficient_classifications=include_insufficient_classifications)
+
+    def getAllUserInformation(self, include_logged_out_users=False, include_insufficient_classifications=False):
+        user_identifiers = self.analyzer.getUniqueUserIdentifiers(user_identifier="username", include_logged_out_users=include_logged_out_users)
+        user_information_dictionaries = self.getUserInformation(user_identifiers, include_insufficient_classifications=include_insufficient_classifications)
+        return {user_identifier: user_information_dictionary for user_identifier, user_information_dictionary  in zip(user_identifiers, user_information_dictionaries)}
+
+    def getMostAccurateUsernames(self, include_logged_out_users=False, include_insufficient_classifications=False, classification_minimum=0):
+        user_information_dictionaries = copy(self.getAllUserInformation(include_logged_out_users=include_logged_out_users, include_insufficient_classifications=include_insufficient_classifications))
+        new_user_information_dictionaries = []
+        for user_identifier in user_information_dictionaries:
+            print(user_identifier)
+            total_classifications = 0
+            for subject_type in user_information_dictionaries[user_identifier]["Classifications"]:
+                total_classifications += user_information_dictionaries[user_identifier]["Classifications"][subject_type]["total"]
+            """
+            if(total_classifications > classification_minimum):
+                del user_information_dictionaries[user_identifier]
+            elif(user_information_dictionaries[user_identifier]["Performance"]["Accuracy"] not is None):
+                del user_information_dictionaries[user_identifier]
+            """
+
+
+        sorted_user_names = sorted(user_information_dictionaries.items(), key=lambda x: x[1]["Performance"]["Accuracy"], reverse=True)
+        return sorted_user_names
+
+
+    @multioutput
+    @plotting
+    @uses_user_identifiers
+    def plotUserPerformance(self, user_identifier, **kwargs):
+        user_accuracy = self.getUserAccuracy(user_identifier)
+
+        if(user_accuracy is None):
+            warnings.warn(f"{user_identifier} has no valid classifications for performance. Skipping plot.")
+            return None
+
+        user_classifications = self.getUserClassifications(user_identifier)
+        user_classification_dataframe = pd.DataFrame.from_dict(user_classifications,  orient="index")
+        user_classification_dataframe = user_classification_dataframe.rename(columns={"success": "Success", "failure": "Failure", "total": "Total"})
+        formatted_accuracy = round(100 * user_accuracy, 2)
+        user_classification_dataframe.plot.bar(y=["Success", "Failure"], stacked=True, title=f"User Accuracy for {user_identifier}: {formatted_accuracy}%", **kwargs)
+
+        # Put the success percentage on the top of each bar
+        index = 0
+        for subject_type, subject_type_row in user_classification_dataframe.iterrows():
+            total = subject_type_row["Total"]
+            success = subject_type_row["Success"]
+            if(total != 0):
+                plt.text(index, success, f"{round(100 * success / total, 2)}%", ha="center", va="bottom")
+            index += 1
+
+        plt.xticks(rotation=0)
+        plt.xlabel("Subject Type")
+        plt.ylabel("Number of Classifications")
+
+    def plotAllUsersPerformanceHistogram(self, include_logged_out_users=False, include_insufficient_classifications=False, **kwargs):
+        user_accuracies = self.getAllUserAccuracies(include_logged_out_users=include_logged_out_users, include_insufficient_classifications=include_insufficient_classifications)
+        plt.title("User Performance Histogram")
+        self.plotPerformanceHistogram(user_accuracies, **kwargs)
+
+    def plotTopUsersPerformanceHistogram(self, count_threshold=None, percentile=None, include_insufficient_classifications=False, **kwargs):
+        top_usernames = self.analyzer.getTopUsernames(count_threshold=count_threshold, percentile=percentile)
+        print(f"Plotting performance histogram for {len(top_usernames)} users.")
+        top_user_accuracies = self.getUserAccuracy(top_usernames, include_insufficient_classifications=include_insufficient_classifications)
+        plt.title("Top User Performance Histogram")
+        self.plotPerformanceHistogram(top_user_accuracies, **kwargs)
+
+    @staticmethod
+    @plotting
+    def plotPerformanceHistogram(accuracies, **kwargs):
+        # Remove None accuracies
+        accuracy_values = [x for x in accuracies if x is not None]
+        bins = kwargs.pop("bins", 20)
+        plt.hist(accuracy_values, bins=bins, **kwargs)
+        plt.xlabel("User Accuracy")
+        plt.ylabel("Number of Users")
+
+    @plotting
+    def plotTopUsersPerformances(self, count_threshold=None, percentile=None, include_insufficient_classifications=False, **kwargs):
+        top_usernames = self.analyzer.getTopUsernames(count_threshold=count_threshold, percentile=percentile)
+        print(f"Plotting performance for {len(top_usernames)} users.")
+
+        top_user_accuracies = self.getUserAccuracy(top_usernames, include_insufficient_classifications=include_insufficient_classifications)
+
+        # Sort the accuracies and usernames by accuracy
+        top_user_accuracies, top_usernames = zip(*sorted(zip(top_user_accuracies, top_usernames), reverse=True))
+
+        # Generate x-coordinates for the bars
+        x = np.arange(len(top_usernames))
+
+        # Create the bar plot
+        fig, ax = plt.subplots()
+
+        # Set the default title
+        if (percentile is not None):
+            plt.title(f"Users in the Top {100 - percentile}% of Classifications")
+        elif (count_threshold is not None):
+            plt.title(f"Users with More Than {count_threshold} Classifications")
+
+        # Set the default y label
+        plt.ylabel("User Accuracy", fontsize=15)
+
+        bars = ax.bar(x, top_user_accuracies, **kwargs)
+        for i, bar in enumerate(bars):
+            # Display the user's accuracy above the bar
+            offset = 0.01
+            ax.text(bar.get_x() + bar.get_width() / 2, top_user_accuracies[i] + offset, f"{round(100*top_user_accuracies[i], 2)}%", horizontalalignment='center', verticalalignment='bottom', fontsize=10)
+
+        ax.set_xticks(x)
+        ax.set_xticklabels(top_usernames, ha='right', va='top', rotation=45, color="black")
+        plt.show()
+
+
+
+
+
+
+
+
 
 

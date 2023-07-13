@@ -4,7 +4,7 @@ import subprocess
 
 # https://aggregation-caesar.zooniverse.org/README.html
 
-class Classifier:
+class Aggregator:
     def __init__(self, classifications_csv_filename, workflow_csv_filename, config_directory="Config", extraction_directory="Extractions", reductions_directory="Reductions"):
         """
         Initializes a Classifier object. This object is used to generate config files,
@@ -44,7 +44,7 @@ class Classifier:
         self.extracted_file = None
         self.reduced_file = None
 
-    def classifyWorkflow(self, workflow_id, **kwargs):
+    def aggregateWorkflow(self, workflow_id, **kwargs):
         """
         Classifies a workflow using the Panoptes aggregation client by generating config files,
         extracted files, and reduction files.
@@ -52,7 +52,7 @@ class Classifier:
         Parameters
         ----------
             workflow_id : int
-                The ID of the workflow to be classified.
+                The ID of the workflow to be aggregated.
             **kwargs : optional
                 Optional arguments to be passed to the config command.
         """
@@ -74,7 +74,7 @@ class Classifier:
         Parameters
         ----------
             workflow_id : int
-                The ID of the workflow to be classified.
+                The ID of the workflow to be aggregated.
             **kwargs : optional
                 Optional arguments to be passed to the config command.
         """

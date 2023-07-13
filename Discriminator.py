@@ -1,6 +1,9 @@
 import csv
 import pickle
+import warnings
 
+import unWISE_verse.Data
+from panoptes_client import SubjectSet, Project, Subject
 from unWISE_verse import Data
 from unWISE_verse.Spout import Spout
 
@@ -19,7 +22,7 @@ class Discriminator:
         # Initialize the metadata list.
         self.metadata_list = metadata_list
 
-    def findValidMetadata(self, functional_condition, *field_names):
+    def findValidMetadata(self, functional_condition, *field_names, display_printouts=True):
         """
         Finds all metadata objects that satisfy the functional condition.
 
@@ -45,11 +48,14 @@ class Discriminator:
         valid_metadata_list = []
 
         # Iterate through the metadata objects in the metadata list.
-        for metadata in self.metadata_list:
+        for index, metadata in enumerate(self.metadata_list):
             # Check if the metadata object satisfies the functional condition.
             if self.isValid(metadata, functional_condition, *field_names):
                 # If it does, add it to the list of valid metadata objects.
                 valid_metadata_list.append(metadata)
+
+            if (display_printouts and index % 1000 == 0 and index != 0):
+                print(f"Checked {index} rows.")
 
         # Return the list of valid metadata objects.
         return valid_metadata_list
@@ -148,15 +154,38 @@ class Discriminator:
             list = pickle.load(file)
             return list
 
+    @staticmethod
+    def saveResultToCSV(metadata_list, filename):
+        """
+        Saves a list of Metadata objects to a CSV file.
+
+        Parameters
+        ----------
+            list : list
+                The list of objects that you want to save.
+            filename : str
+                The name of the file that you want to save the list to.
+        """
+
+        # Open the file and save the list to it.
+        print("Metadata list length: " + str(len(metadata_list)))
+        with open(filename, 'w', newline='') as file:
+            writer = csv.DictWriter(file, fieldnames=metadata_list[0].field_names)
+            writer.writeheader()
+            for metadata in metadata_list:
+                writer.writerow(metadata.toDictionary())
+
 
 class SubjectDiscriminator(Discriminator):
-    def __init__(self, subject_set):
+    def __init__(self, subject_list):
         """
         Initializes a SubjectDiscriminator object. This object is used to filter subject objects (from a subject set)
         based on a functional condition.
 
         Parameters
         ----------
+            project : Project
+                The project that you want to filter subjects from.
             subject_set : SubjectSet
                 The subject set that you want to filter subjects from.
 
@@ -166,23 +195,10 @@ class SubjectDiscriminator(Discriminator):
         """
 
         # Initialize the subject list.
-        self.subject_list = []
-
-        # Iterate through the subjects in the subject set and add them to the subject list.
-        for index, subject in enumerate(subject_set.subjects):
-            # Print the number of completed subjects every 1000 subjects.
-            if (index % 1000 == 0 and index != 0):
-                # Print the number of completed subjects
-                print(f"Added {index} subjects to list.")
-
-            # Add the subject to the subject list.
-            self.subject_list.append(subject)
+        self.subject_list = subject_list
 
         # Initialize the metadata list.
         self.metadata_list = []
-
-        # Print the length of the retrieved subject list.
-        print(f"Length of Subject List: {len(self.subject_list)}")
 
         # Iterate through the subjects in the subject list and add their metadata to the metadata list.
         for index, subject in enumerate(self.subject_list):
@@ -342,7 +358,7 @@ class SubjectDiscriminator(Discriminator):
             return subject_list
 
     @staticmethod
-    def convertToCSV(subject_list, filename):
+    def convertToCSV(subject_list, filename, *field_names):
         """
         Converts a list of subjects to a CSV file.
 
@@ -361,7 +377,20 @@ class SubjectDiscriminator(Discriminator):
         # Create the CSV file.
         with open(filename, mode="w", newline='') as csv_file:
             # Get the field names associated with the subject objects and their metadata.
-            fieldnames = subject_list[0].__dict__.keys() | subject_list[0].metadata.keys()
+            if(len(field_names) != 0):
+                fieldnames = list(field_names)
+            else:
+                fieldnames = list(subject_list[0].__dict__.keys() | subject_list[0].metadata.keys())
+
+                # Iterate through the subjects in the subject list.
+
+                for subject in subject_list:
+                    # Create a row dictionary that contains the subject object's fields and metadata.
+                    row_dict = subject.__dict__ | subject.metadata
+
+                    for key in row_dict.keys():
+                        if (key not in fieldnames):
+                            fieldnames.append(key)
 
             # Create the CSV writer with the field names.
             csv_writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
@@ -369,13 +398,19 @@ class SubjectDiscriminator(Discriminator):
             # Write the header row to the CSV file.
             csv_writer.writeheader()
 
-            # Iterate through the subjects in the subject list.
             for subject in subject_list:
                 # Create a row dictionary that contains the subject object's fields and metadata.
                 row_dict = subject.__dict__ | subject.metadata
+                for fieldname in fieldnames:
+                    if (fieldname not in row_dict):
+                        row_dict[fieldname] = None
 
-                # Write the row dictionary to the CSV file.
-                csv_writer.writerow(row_dict)
+                result_row_dict = {}
+                for fieldname in fieldnames:
+                    result_row_dict[fieldname] = row_dict[fieldname]
+
+                # Write the row
+                csv_writer.writerow(result_row_dict)
 
 
 class CSVDiscriminator(Discriminator):
@@ -410,7 +445,7 @@ class CSVDiscriminator(Discriminator):
 
 
 class SubjectCSVDiscriminator(CSVDiscriminator):
-    def __init__(self, subject_set, csv_path):
+    def __init__(self, csv_path, subject_set=None):
         """
         Creates a subject CSV discriminator. This discriminator will load a CSV file and use it to filter the rows,
         where each row corresponds to a subject.
@@ -468,9 +503,13 @@ class SubjectCSVDiscriminator(CSVDiscriminator):
                 # Iterate through the rows in the CSV file.
                 for row in csv_reader:
                     # Check if the subject corresponds the subject set.
-                    if row["subject_set_id"] == self.subject_set.id:
+                    if(self.subject_set is None):
                         # Write the row to the reduced CSV file.
                         reduced_csv_writer.writerow(row)
+                    else:
+                        if row["subject_set_id"] == self.subject_set.id:
+                            # Write the row to the reduced CSV file.
+                            reduced_csv_writer.writerow(row)
 
         # Return the reduced CSV path.
         return reduced_csv_path
@@ -529,7 +568,6 @@ class SubjectCSVDiscriminator(CSVDiscriminator):
 
                     # Get the metadata row dictionary.
                     metadata_row_dict = eval(row["metadata"])
-
                     # Iterate through the header keys.
                     for key in header_keys:
 
@@ -574,7 +612,10 @@ class SubjectCSVDiscriminator(CSVDiscriminator):
             # Check if the metadata is valid.
             if self.isValid(metadata, functional_condition, *field_names):
                 # Get the subject.
-                subject = Spout.get_subject(metadata.getFieldValue("subject_id"), self.subject_set.id)
+                if(self.subject_set is None):
+                    subject = Spout.get_subject(metadata.getFieldValue("subject_id"))
+                else:
+                    subject = Spout.get_subject(metadata.getFieldValue("subject_id"), self.subject_set.id)
 
                 # Add the subject to the valid subject list.
                 valid_subject_list.append(subject)
@@ -589,7 +630,7 @@ class SubjectCSVDiscriminator(CSVDiscriminator):
     @staticmethod
     def saveResult(subject_list, filename):
         """
-        Saves the result of a subject list to a CSV file.
+        Saves the result of a subject list to a pickle file.
 
         Parameters
         ----------
@@ -605,7 +646,7 @@ class SubjectCSVDiscriminator(CSVDiscriminator):
     @staticmethod
     def loadResult(filename):
         """
-        Loads the result of a subject list from a CSV file.
+        Loads the result of a subject list from a pickle file.
 
         Parameters
         ----------
@@ -618,7 +659,7 @@ class SubjectCSVDiscriminator(CSVDiscriminator):
                 The list of subjects that you want to load.
         """
 
-        # Load the subject list from a CSV file from a list of subject IDs.
+        # Load the subject list from a pickle file from a list of subject IDs.
         return SubjectDiscriminator.loadResult(filename)
 
     @staticmethod

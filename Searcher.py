@@ -22,6 +22,7 @@ from matplotlib.lines import Line2D
 from matplotlib.patches import Rectangle
 from matplotlib.transforms import Bbox
 import mplcursors
+from Decorators import ignore_warnings, plotting
 
 # TODO: Add documentation for Searcher classes
 
@@ -325,14 +326,13 @@ class Searcher(ABC):
 
         return ra_min, ra_max, dec_min, dec_max
 
+    @plotting
     def plotEntries(self, **kwargs):
         if (self.result_table is None):
             print("Cannot plot entries. Result table is None.")
             return None
-        fig_size = kwargs.get("fig_size", (10,10))
-        kwargs.pop("fig_size", None)
-        style = kwargs.get("style", astropy_mpl_style)
-        kwargs.pop("style", None)
+        fig_size = kwargs.pop("fig_size", (10,10))
+        style = kwargs.pop("style", astropy_mpl_style)
 
         fig = plt.figure(figsize=fig_size)
         plt.style.use(style)
@@ -358,16 +358,15 @@ class Searcher(ABC):
         ra_axis = ax.coords['ra']
         dec_axis = ax.coords['dec']
 
-        ra_spacing = kwargs.get("ra_spacing", None)
-        dec_spacing = kwargs.get("dec_spacing", None)
+        ra_spacing = kwargs.pop("ra_spacing", None)
+        dec_spacing = kwargs.pop("dec_spacing", None)
 
         ra_axis.set_major_formatter('dd:mm:ss')
         ra_axis.set_ticks(spacing=ra_spacing)
         dec_axis.set_major_formatter('dd:mm:ss')
         dec_axis.set_ticks(spacing=dec_spacing)
 
-        add_grid = kwargs.get("grid", False)
-        kwargs.pop("grid", None)
+        add_grid = kwargs.pop("grid", False)
         ax.grid(add_grid)
 
         # Plot the search coordinates
@@ -378,32 +377,22 @@ class Searcher(ABC):
         dec_key = self.decimal_coordinate_keys["DEC"]
         name_key = self.source_name_key["Source Name"]
 
-        s = kwargs.get("s", 3)
-        kwargs.pop("s", None)
+        s = kwargs.pop("s", 3)
 
-        c = kwargs.get("c", 'k')
-        kwargs.pop("c", None)
+        c = kwargs.pop("c", 'k')
 
         # Get the database name from the class name
-        title = kwargs.get("title", None)
-        kwargs.pop("title", None)
 
-        if (title is None):
-            if (self.database_name != "" and self.database_name is not None):
-                plt.title(f"{self.database_name} Query Results: {len(self.result_table)}")
-            else:
-                plt.title(f"Query Results: {len(self.result_table)}")
+        if (self.database_name != "" and self.database_name is not None):
+            plt.title(f"{self.database_name} Query Results: {len(self.result_table)}")
         else:
-            plt.title(title)
+            plt.title(f"Query Results: {len(self.result_table)}")
 
-        separation = kwargs.get("separation", None)
-        kwargs.pop("separation", None)
+        separation = kwargs.pop("separation", None)
 
-        source_labels = kwargs.get("source_labels", False)
-        kwargs.pop("source_labels", None)
+        source_labels = kwargs.pop("source_labels", False)
 
-        source_labels_size = kwargs.get("source_labels_size", 8)
-        kwargs.pop("source_labels_size", None)
+        source_labels_size = kwargs.pop("source_labels_size", 8)
 
         if (len(self.result_table) > 0):
             ax.scatter(list(self.result_table[ra_key]), list(self.result_table[dec_key]), transform=ax.get_transform('world'), s=s, c=c, *kwargs)
@@ -472,10 +461,6 @@ class Searcher(ABC):
         # Reverse x-axis
         ax.invert_xaxis()
 
-        # Show the plot
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            plt.show()
 
     @classmethod
     def getAllSubConditions(cls, conditional_string):
