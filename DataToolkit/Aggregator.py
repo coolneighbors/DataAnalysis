@@ -82,6 +82,10 @@ class Aggregator:
         # Store the workflow ID
         self.workflow_id = workflow_id
 
+        # Create the config directory if it does not exist
+        if(not os.path.exists(self.config_directory)):
+            os.mkdir(self.config_directory)
+
         # Define the command you want to run
         command = f"panoptes_aggregation config {self.workflow_csv_filename} {workflow_id} -d {self.config_directory}"
 
@@ -151,6 +155,10 @@ class Aggregator:
         if(self.extractor_config_file is None):
             raise ValueError("Extractor file is not defined. Please run config() first.")
 
+        # Create the extraction directory if it does not exist
+        if(not os.path.exists(self.extraction_directory)):
+            os.mkdir(self.extraction_directory)
+
         # Define the command you want to run
         command = f"panoptes_aggregation extract {self.classifications_csv_filename} {self.extractor_config_file} -d {self.extraction_directory}"
 
@@ -214,6 +222,10 @@ class Aggregator:
         # Check that the extracted file is defined
         if(self.extracted_file is None):
             raise ValueError("Extracted file is not defined. Please run extract() first.")
+
+        # Create the reductions directory if it does not exist
+        if(not os.path.exists(self.reductions_directory)):
+            os.mkdir(self.reductions_directory)
 
         # Define the command you want to run
         command = f"panoptes_aggregation reduce {self.extracted_file} {self.reducer_config_file} -d {self.reductions_directory} -s"
