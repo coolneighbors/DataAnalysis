@@ -143,6 +143,8 @@ class Aggregator:
                     command_str += f" --{key}"
 
         # Run the command and capture the output
+        print(command_str)
+        print(os.getcwd())
         output = subprocess.check_output(command_str, cwd=os.getcwd())
 
         # Decode the output assuming it's in UTF-8 encoding
