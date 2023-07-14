@@ -722,6 +722,7 @@ class SimbadSearcher(Searcher):
                         box_search_string = f"region(box, {ra} -{dec}, {FOV}s {FOV}s)"
                     else:
                         box_search_string = f"region(box, {ra} +{dec}, {FOV}s {FOV}s)"
+                        print(box_search_string)
                     result_table = simbad_query.query_criteria(box_search_string)
                 elif (self.search_type == "Cone" or self.search_type == "Cone Search"):
                     result_table = simbad_query.query_region(self.search_coordinates, radius=self.search_input)

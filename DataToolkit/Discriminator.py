@@ -62,7 +62,7 @@ class Discriminator:
 
     def isValid(self, metadata, functional_condition, *field_names):
         """
-        Determines whether or not a metadata object satisfies the functional condition.
+        Determines whether a metadata object satisfies the functional condition.
 
         Parameters
         ----------

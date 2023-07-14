@@ -1,6 +1,6 @@
 /venv/
 /.idea/
-/__pycache__/
+/DataToolkit/__pycache__/
 /Plots/
 *.yaml
 *.csv
