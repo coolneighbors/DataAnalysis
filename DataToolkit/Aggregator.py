@@ -32,6 +32,15 @@ class Aggregator:
         """
 
         # Initialize variables
+
+        # If the classifications csv filename is a relative path, make it an absolute path based on the current working directory
+        if(not os.path.isabs(classifications_csv_filename)):
+            classifications_csv_filename = os.path.join(os.getcwd(), classifications_csv_filename)
+
+        # If the workflow csv filename is a relative path, make it an absolute path based on the current working directory
+        if(not os.path.isabs(workflow_csv_filename)):
+            workflow_csv_filename = os.path.join(os.getcwd(), workflow_csv_filename)
+
         self.classifications_csv_filename = classifications_csv_filename
         self.workflow_csv_filename = workflow_csv_filename
         
@@ -134,7 +143,7 @@ class Aggregator:
                     command_str += f" --{key}"
 
         # Run the command and capture the output
-        output = subprocess.check_output(command_str)
+        output = subprocess.check_output(command_str, cwd=os.getcwd())
 
         # Decode the output assuming it's in UTF-8 encoding
         decoded_output = output.decode("utf-8")
@@ -218,7 +227,7 @@ class Aggregator:
                     command_str += f" --{key}"
 
         # Run the command and capture the output
-        output = subprocess.check_output(command_str)
+        output = subprocess.check_output(command_str, cwd=os.getcwd())
 
         # Decode the output assuming it's in UTF-8 encoding
         decoded_output = output.decode("utf-8")
@@ -294,7 +303,7 @@ class Aggregator:
                     command_str += f" --{key}"
 
         # Run the command and capture the output
-        output = subprocess.check_output(command_str)
+        output = subprocess.check_output(command_str, cwd=os.getcwd())
 
         # Decode the output assuming it's in UTF-8 encoding
         decoded_output = output.decode("utf-8")
