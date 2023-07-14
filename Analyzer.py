@@ -1147,7 +1147,6 @@ class Analyzer:
         total_classifications = subject_classifications["total"]
         movement_ratio = subject_classifications["yes"] / total_classifications
         non_movement_ratio = subject_classifications["no"] / total_classifications
-        print(f"Movement ratio: {movement_ratio}", "Subject Type: ", subject_type)
         if (subject_type == "SMDET Candidate"):
             return (movement_ratio > acceptance_ratio) and (subject_classifications["yes"] > acceptance_threshold), subject_classifications
         else:
@@ -1220,7 +1219,7 @@ class Analyzer:
         return generated_files
 
     # Principle method for getting acceptable candidates and sorting them by database
-    def performCandidatesSort(self, acceptance_ratio=0.5, acceptance_threshold=4, weighted=False, acceptable_candidates_csv=None):
+    def performCandidatesSort(self, acceptance_ratio=0.5, acceptance_threshold=0, weighted=False, acceptable_candidates_csv=None):
         acceptable_candidates = []
         if (acceptable_candidates_csv is not None and os.path.exists(acceptable_candidates_csv)):
             print("Found acceptable candidates file.")
