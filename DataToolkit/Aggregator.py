@@ -109,7 +109,7 @@ class Aggregator:
                     command_str += f" --{key}"
 
         # Run the command and capture the output
-        output = subprocess.check_output(command_str, shell=True)
+        output = subprocess.check_output(command_str)
 
         # Decode the output assuming it's in UTF-8 encoding
         decoded_output = output.decode("utf-8")
@@ -183,7 +183,7 @@ class Aggregator:
                     command_str += f" --{key}"
 
         # Run the command and capture the output
-        output = subprocess.check_output(command_str, shell=True)
+        output = subprocess.check_output(command_str)
 
         # Decode the output assuming it's in UTF-8 encoding
         decoded_output = output.decode("utf-8")
@@ -249,7 +249,7 @@ class Aggregator:
                     command_str += f" --{key}"
 
         # Run the command and capture the output
-        output = subprocess.check_output(command_str, shell=True)
+        output = subprocess.check_output(command_str)
 
         # Decode the output assuming it's in UTF-8 encoding
         decoded_output = output.decode("utf-8")

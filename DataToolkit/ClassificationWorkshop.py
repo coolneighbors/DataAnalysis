@@ -33,8 +33,7 @@ intern = "acbravo"
 worrisome_user = "eantonio2023"
 # TODO: Investigate why box search is not always providing same results as cone search
 if (__name__ == "__main__"):
-    #analyzer.getSimbadQueryForSubject(89273238, plot=True)
-    #analyzer.getSimbadQueryForSubject(89273238, search_type="Cone", radius=60 * u.arcsec, plot=True)
+    runAggregator()
 
 
 
