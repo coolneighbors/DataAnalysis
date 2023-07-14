@@ -29,8 +29,6 @@ analyzer = Analyzer.load()
 
 subject_ids = analyzer.getSubjectIDs()
 test_usernames = ["Rattus", "pathfinder7567", "jcstew"]
-intern = "acbravo"
-worrisome_user = "eantonio2023"
 # TODO: Investigate why box search is not always providing same results as cone search
 if (__name__ == "__main__"):
     runAggregator()

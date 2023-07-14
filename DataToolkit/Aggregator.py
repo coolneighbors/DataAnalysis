@@ -5,7 +5,7 @@ import subprocess
 # https://aggregation-caesar.zooniverse.org/README.html
 
 class Aggregator:
-    def __init__(self, classifications_csv_filename, workflow_csv_filename, config_directory="Config", extraction_directory="Extractions", reductions_directory="Reductions"):
+    def __init__(self, classifications_csv_filename, workflow_csv_filename, config_directory="Config", extractions_directory="Extractions", reductions_directory="Reductions"):
         """
         Initializes a Classifier object. This object is used to generate config files,
         extracted files, and reduction files of a workflow using the Panoptes aggregation CLI.
@@ -19,7 +19,7 @@ class Aggregator:
             config_directory : str, optional
                 The name of the directory where the config files will be stored.
                 The default is "Config".
-            extraction_directory : str, optional
+            extractions_directory : str, optional
                 The name of the directory where the extracted files will be stored.
                 The default is "Extractions".
             reductions_directory : str, optional
@@ -34,8 +34,21 @@ class Aggregator:
         # Initialize variables
         self.classifications_csv_filename = classifications_csv_filename
         self.workflow_csv_filename = workflow_csv_filename
+        
+        # If the config directory is a relative path, make it an absolute path based on the current working directory
+        if(not os.path.isabs(config_directory)):
+            config_directory = os.path.join(os.getcwd(), config_directory)
+            
+        # If the extraction directory is a relative path, make it an absolute path based on the current working directory
+        if(not os.path.isabs(extractions_directory)):
+            extractions_directory = os.path.join(os.getcwd(), extractions_directory)
+        
+        # If the reductions directory is a relative path, make it an absolute path based on the current working directory
+        if(not os.path.isabs(reductions_directory)):
+            reductions_directory = os.path.join(os.getcwd(), reductions_directory)
+        
         self.config_directory = config_directory
-        self.extraction_directory = extraction_directory
+        self.extractions_directory = extractions_directory
         self.reductions_directory = reductions_directory
         self.extractor_config_file = None
         self.reducer_config_file = None
@@ -82,11 +95,19 @@ class Aggregator:
         # Store the workflow ID
         self.workflow_id = workflow_id
 
+        if(self.workflow_id is None):
+            raise ValueError("Workflow ID has not been set.")
+
+        if(not os.path.exists(self.workflow_csv_filename)):
+            raise FileNotFoundError(f"Workflow file {self.workflow_csv_filename} does not exist.")
+
         # Create the config directory if it does not exist
         if(not os.path.exists(self.config_directory)):
             os.mkdir(self.config_directory)
 
         # Define the command you want to run
+        # TODO: Fix the command so that it knows what current working directory it should be running in.
+
         command = f"panoptes_aggregation config {self.workflow_csv_filename} {workflow_id} -d {self.config_directory}"
 
         # Construct the command string with optional arguments
@@ -155,12 +176,18 @@ class Aggregator:
         if(self.extractor_config_file is None):
             raise ValueError("Extractor file is not defined. Please run config() first.")
 
+        if(not os.path.exists(self.classifications_csv_filename)):
+            raise ValueError(f"Classifications file {self.classifications_csv_filename} does not exist.")
+
+        if(not os.path.exists(self.extractor_config_file)):
+            raise ValueError(f"Extractor config file {self.extractor_config_file} does not exist.")
+
         # Create the extraction directory if it does not exist
-        if(not os.path.exists(self.extraction_directory)):
-            os.mkdir(self.extraction_directory)
+        if(not os.path.exists(self.extractions_directory)):
+            os.mkdir(self.extractions_directory)
 
         # Define the command you want to run
-        command = f"panoptes_aggregation extract {self.classifications_csv_filename} {self.extractor_config_file} -d {self.extraction_directory}"
+        command = f"panoptes_aggregation extract {self.classifications_csv_filename} {self.extractor_config_file} -d {self.extractions_directory}"
 
         # Construct the command string with optional arguments
         command_str = command
@@ -201,9 +228,9 @@ class Aggregator:
 
         # Save the filename of the extracted file
         if(kwargs.get("o") is not None):
-            self.extracted_file = os.path.join(self.extraction_directory, "question_extractor_" + kwargs.get("o").removesuffix(".yaml") + ".csv")
+            self.extracted_file = os.path.join(self.extractions_directory, "question_extractor_" + kwargs.get("o").removesuffix(".yaml") + ".csv")
         else:
-            self.extracted_file = os.path.join(self.extraction_directory, "question_extractor_" + kwargs.get("output").removesuffix(".yaml") + ".csv")
+            self.extracted_file = os.path.join(self.extractions_directory, "question_extractor_" + kwargs.get("output").removesuffix(".yaml") + ".csv")
 
     def reduce(self, **kwargs):
         """
@@ -222,6 +249,12 @@ class Aggregator:
         # Check that the extracted file is defined
         if(self.extracted_file is None):
             raise ValueError("Extracted file is not defined. Please run extract() first.")
+
+        if(not os.path.exists(self.extracted_file)):
+            raise ValueError(f"Extracted file {self.extracted_file} does not exist.")
+
+        if(not os.path.exists(self.reducer_config_file)):
+            raise ValueError(f"Reducer config file {self.reducer_config_file} does not exist.")
 
         # Create the reductions directory if it does not exist
         if(not os.path.exists(self.reductions_directory)):
