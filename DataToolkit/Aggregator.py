@@ -41,6 +41,13 @@ class Aggregator:
         if(not os.path.isabs(workflow_csv_filename)):
             workflow_csv_filename = os.path.join(os.getcwd(), workflow_csv_filename)
 
+        # Check if there are any spaces in the filenames
+        if(" " in classifications_csv_filename):
+            raise ValueError(f"The classifications csv filename cannot contain spaces: {classifications_csv_filename}")
+
+        if(" " in workflow_csv_filename):
+            raise ValueError(f"The workflow csv filename cannot contain spaces: {workflow_csv_filename}")
+
         self.classifications_csv_filename = classifications_csv_filename
         self.workflow_csv_filename = workflow_csv_filename
         
@@ -55,6 +62,15 @@ class Aggregator:
         # If the reductions directory is a relative path, make it an absolute path based on the current working directory
         if(not os.path.isabs(reductions_directory)):
             reductions_directory = os.path.join(os.getcwd(), reductions_directory)
+
+        if (" " in config_directory):
+            raise ValueError(f"The config directory cannot contain spaces: {config_directory}")
+
+        if (" " in extractions_directory):
+            raise ValueError(f"The extractions directory cannot contain spaces: {extractions_directory}")
+
+        if (" " in reductions_directory):
+            raise ValueError(f"The reductions directory cannot contain spaces: {reductions_directory}")
         
         self.config_directory = config_directory
         self.extractions_directory = extractions_directory
@@ -115,8 +131,6 @@ class Aggregator:
             os.mkdir(self.config_directory)
 
         # Define the command you want to run
-        # TODO: Fix the command so that it knows what current working directory it should be running in.
-
         command = f"panoptes_aggregation config {self.workflow_csv_filename} {workflow_id} -d {self.config_directory}"
 
         # Construct the command string with optional arguments
@@ -143,9 +157,7 @@ class Aggregator:
                     command_str += f" --{key}"
 
         # Run the command and capture the output
-        print(command_str)
-        print(os.getcwd())
-        output = subprocess.check_output(command_str, cwd=os.getcwd(), shell=True)
+        output = subprocess.check_output(command_str, shell=True)
 
         # Decode the output assuming it's in UTF-8 encoding
         decoded_output = output.decode("utf-8")
@@ -229,7 +241,7 @@ class Aggregator:
                     command_str += f" --{key}"
 
         # Run the command and capture the output
-        output = subprocess.check_output(command_str, cwd=os.getcwd(), shell=True)
+        output = subprocess.check_output(command_str, shell=True)
 
         # Decode the output assuming it's in UTF-8 encoding
         decoded_output = output.decode("utf-8")
@@ -305,7 +317,7 @@ class Aggregator:
                     command_str += f" --{key}"
 
         # Run the command and capture the output
-        output = subprocess.check_output(command_str, cwd=os.getcwd(), shell=True)
+        output = subprocess.check_output(command_str, shell=True)
 
         # Decode the output assuming it's in UTF-8 encoding
         decoded_output = output.decode("utf-8")
