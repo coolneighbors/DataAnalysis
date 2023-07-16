@@ -2,7 +2,6 @@ import csv
 import pickle
 import warnings
 
-import unWISE_verse.Data
 from panoptes_client import SubjectSet, Project, Subject
 from unWISE_verse import Data
 from unWISE_verse.Spout import Spout
@@ -168,9 +167,8 @@ class Discriminator:
         """
 
         # Open the file and save the list to it.
-        print("Metadata list length: " + str(len(metadata_list)))
         with open(filename, 'w', newline='') as file:
-            writer = csv.DictWriter(file, fieldnames=metadata_list[0].field_names)
+            writer = csv.DictWriter(file, fieldnames=metadata_list[0].getAdjustedFieldNames())
             writer.writeheader()
             for metadata in metadata_list:
                 writer.writerow(metadata.toDictionary())
@@ -322,7 +320,7 @@ class SubjectDiscriminator(Discriminator):
             pickle.dump(subject_id_list, file)
 
     @staticmethod
-    def loadResult(filename):
+    def loadResult(filename, display_printouts=True):
         """
         Loads a list of subject ids from a file and returns the associated list of subject objects.
 
@@ -348,7 +346,7 @@ class SubjectDiscriminator(Discriminator):
             # Iterate through the subject ids in the list.
             for index, subject_id in enumerate(list):
                 # For every 10% of the list, print out the number of subjects that have been loaded.
-                if(index % min(int(len(list)/10), 1000) == 0 and index != 0):
+                if(display_printouts and index % min(int(len(list)/10), 1000) == 0 and index != 0):
                     print(f"Loaded {index} subjects.")
 
                 # Get the subject object from the subject id and add it to the list of subjects.
@@ -358,9 +356,9 @@ class SubjectDiscriminator(Discriminator):
             return subject_list
 
     @staticmethod
-    def convertToCSV(subject_list, filename, *field_names):
+    def saveResultToCSV(subject_list, filename, *field_names):
         """
-        Converts a list of subjects to a CSV file.
+        Saves a list of subjects to a CSV file.
 
         Parameters
         ----------
@@ -371,7 +369,7 @@ class SubjectDiscriminator(Discriminator):
 
         Notes
         -----
-            The CSV file will also contain all of the fields in the subject objects' metadata dictionary.
+            The CSV file will also contain the fields in the subject objects' metadata dictionary.
         """
 
         # Create the CSV file.
@@ -445,26 +443,34 @@ class CSVDiscriminator(Discriminator):
 
 
 class SubjectCSVDiscriminator(CSVDiscriminator):
-    def __init__(self, csv_path, subject_set=None):
+    def __init__(self, csv_path, subject_set_identifer=None):
         """
         Creates a subject CSV discriminator. This discriminator will load a CSV file and use it to filter the rows,
         where each row corresponds to a subject.
 
         Parameters
         ----------
-            subject_set : panoptes_client.SubjectSet
-                The subject set that you want to filter by.
             csv_path : str
                 The path to the CSV file that you want to load, where each row corresponds to a subject.
+            subject_set_identifer : SubjectSet or int or str
+                The subject set that you want to use to filter the rows. If this is an integer (subject set id) or string (subject set name),
+                then it will be used to get the subject set using Spout.
         """
 
         # Initialize the subject set.
-        self.subject_set = subject_set
+
+        if(isinstance(subject_set_identifer, SubjectSet)):
+            self.subject_set = subject_set_identifer
+        elif(isinstance(subject_set_identifer, int) or isinstance(subject_set_identifer, str)):
+            login = Spout.requestLogin()
+            project_id = Spout.requestProjectID()
+            spout = Spout(project_id, login)
+            self.subject_set = spout.get_subject_set(subject_set_identifer)
 
         # Reduce the CSV file to only contain rows that correspond to subjects in the subject set.
         reduced_csv_path = self.reduceCSV(csv_path)
 
-        # Expand the CSV file to contain all of the metadata for each subject.
+        # Expand the CSV file to contain the metadata for each subject.
         expanded_csv_path = self.expandCSV(reduced_csv_path)
 
         super().__init__(expanded_csv_path)
@@ -516,7 +522,7 @@ class SubjectCSVDiscriminator(CSVDiscriminator):
 
     def expandCSV(self, csv_path):
         """
-        Expands a CSV file to include all of the fields in the subject objects' metadata dictionary.
+        Expands a CSV file to include the fields in the subject objects' metadata dictionary.
 
         Parameters
         ----------
@@ -587,7 +593,7 @@ class SubjectCSVDiscriminator(CSVDiscriminator):
 
     def findValidSubjects(self, functional_condition, *field_names, display_printouts=True):
         """
-        Finds all of the subjects in the subject set that satisfy the functional condition.
+        Finds subjects in the subject set that satisfy the functional condition.
 
         Parameters
         ----------
@@ -596,7 +602,7 @@ class SubjectCSVDiscriminator(CSVDiscriminator):
             field_names : str
                 The names of the fields that you want to use to filter the subjects.
             display_printouts : bool
-                Whether or not you want to display printouts.
+                Whether you want to display printouts.
 
         Returns
         -------
@@ -663,9 +669,9 @@ class SubjectCSVDiscriminator(CSVDiscriminator):
         return SubjectDiscriminator.loadResult(filename)
 
     @staticmethod
-    def convertToCSV(subject_list, filename):
+    def saveResultToCSV(subject_list, filename):
         """
-        Converts a subject list to a CSV file.
+        Saves a list of subjects to a CSV file.
 
         Parameters
         ----------
@@ -681,4 +687,4 @@ class SubjectCSVDiscriminator(CSVDiscriminator):
         """
 
         # Convert a subject list to a CSV file.
-        SubjectDiscriminator.convertToCSV(subject_list, filename)
+        SubjectDiscriminator.saveResultToCSV(subject_list, filename)

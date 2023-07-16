@@ -1,5 +1,6 @@
 import datetime
 import functools
+import os.path
 
 import matplotlib.pyplot as plt
 
@@ -8,9 +9,13 @@ from Aggregator import Aggregator
 from Decorators import ignore_warnings, timer
 import astropy.units as u
 
-def runAggregator():
-    aggregator = Aggregator("backyard-worlds-cool-neighbors-classifications.csv", "backyard-worlds-cool-neighbors-workflows.csv")
-    aggregator.aggregateWorkflow(workflow_id=24299, v=1.6)
+def runAggregator(workflow_id=24299, version=1.6, classifications_csv="backyard-worlds-cool-neighbors-classifications.csv", workflows_csv="backyard-worlds-cool-neighbors-workflows.csv",config_directory="Config", extractions_directory="Extractions", reductions_directory="Reductions"):
+    # Check the reductions folder to see if the file already exists
+    aggregator = Aggregator(classifications_csv, workflows_csv, config_directory=config_directory, extractions_directory=extractions_directory, reductions_directory=reductions_directory)
+    if(os.path.exists("{}/question_extractor_workflow_{}_V{}.csv".format(aggregator.extractions_directory, workflow_id, version)) and os.path.exists("{}/question_reducer_workflow_{}_V{}.csv".format(aggregator.reductions_directory, workflow_id, version))):
+        print("Aggregated files already exist, skipping aggregation")
+    else:
+        aggregator.aggregateWorkflow(workflow_id=workflow_id, v=version)
 
 def plotClassificationDistribution():
     total_subject_count = 27800
@@ -19,7 +24,7 @@ def plotClassificationDistribution():
 def plotTopUsers(count_threshold=None, percentile=None, **kwargs):
     analyzer.plotTotalClassificationsByTopUsers(count_threshold=count_threshold, percentile=percentile, **kwargs)
 
-#runAggregator()
+runAggregator()
 classification_file = "backyard-worlds-cool-neighbors-classifications.csv"
 extracted_file = "Extractions/question_extractor_workflow_24299_V1.6.csv"
 reduced_file = "Reductions/question_reducer_workflow_24299_V1.6.csv"
@@ -31,7 +36,7 @@ subject_ids = analyzer.getSubjectIDs()
 test_usernames = ["Rattus", "pathfinder7567", "jcstew"]
 # TODO: Investigate why box search is not always providing same results as cone search
 if (__name__ == "__main__"):
-    runAggregator()
+    pass
 
 
 

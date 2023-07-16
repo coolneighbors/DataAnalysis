@@ -1,7 +1,6 @@
 /venv/
 /.idea/
 /DataToolkit/__pycache__/
-/DataToolkit/Jupyter Notebooks/
 /Plots/
 *.yaml
 *.csv
