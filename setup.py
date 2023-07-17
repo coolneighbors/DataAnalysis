@@ -6,7 +6,11 @@ with open('requirements.txt', encoding="utf-16") as f:
 
 python_magic = [line for line in requirements if 'python-magic' in line]
 if(len(python_magic) != 1):
-    raise Exception(f'python-magic requirement not found in requirements.txt or found multiple times: \'{python_magic}\'')
+    for p in python_magic:
+        if("bin" in p):
+            python_magic.remove(p)
+    if(len(python_magic) != 1):
+        raise Exception(f'python-magic requirement not found in requirements.txt or found multiple times: \'{python_magic}\'')
 python_magic = python_magic[0]
 python_magic_version = python_magic.split('==')[1]
 if(len(python_magic_version) != 0):
