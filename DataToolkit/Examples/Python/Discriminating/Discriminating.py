@@ -185,8 +185,6 @@ def csvDiscriminator():
 
 def subjectCSVDiscriminator():
 
-        from unWISE_verse.Spout import Spout
-        from unWISE_verse.Login import Login
         from DataToolkit.Discriminator import SubjectCSVDiscriminator
 
         print("Subject CSV Discrimination Example")
@@ -249,7 +247,7 @@ def subjectCSVDiscriminator():
         subject_csv_discriminator.saveResultToCSV(valid_subjects, "subject_csv_discriminator_example_result.csv")
 
 if (__name__ == "__main__"):
-    #metadataDiscrimination()
+    metadataDiscrimination()
     subjectDiscrimination()
-    #csvDiscriminator()
-    #subjectCSVDiscriminator()
+    csvDiscriminator()
+    subjectCSVDiscriminator()

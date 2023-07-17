@@ -4,6 +4,7 @@
 /Plots/
 *.yaml
 *.csv
+!/DataToolkit/Examples/JupyterNotebooks/Discriminating/CSVDiscriminator/csv_discriminator_example.csv
 *.pkl
 *.pickle
 *.lnk
