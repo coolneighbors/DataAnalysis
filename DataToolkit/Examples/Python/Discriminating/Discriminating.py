@@ -9,7 +9,8 @@ def metadataDiscrimination():
     print("------------------------------")
 
 
-    print("The default character for private metadata is: {} \n".format(Metadata.privatization_symbol))
+    print("The default character for private metadata is: {}".format(Metadata.privatization_symbol))
+    print(f"By adding \'{Metadata.privatization_symbol}\' to the front of your Metadata's field name, it will make it inaccessible to Zooniverse users.\n")
 
     # Create some metadata
     metadata_1 = Metadata(field_names=["Name", "Amount", "Cost", "Calories", "#Ranking"],
@@ -29,12 +30,12 @@ def metadataDiscrimination():
 
     # Create a functional condition, which is just some function that returns a boolean value
     # based on the field values of each metadata object. Must return either True or False, cannot return None.
-    functional_condition = lambda cost: cost < 0.35
+    functional_condition = lambda calories, cost: calories < 100 and cost <= 0.35
 
     # Find the valid metadata based on the functional condition
     # The further arguments are the field names of the metadata objects that the functional condition is based on.
     # "Cost", in this case, but it could be any of the field names or multiple field names (e.g. "Cost", "Calories")
-    valid_metadata = discriminator.findValidMetadata(functional_condition, "Cost")
+    valid_metadata = discriminator.findValidMetadata(functional_condition, "Calories", "Cost")
 
     # Print the valid metadata
     print("The valid metadata is:")
@@ -96,11 +97,6 @@ def subjectDiscrimination():
 
     # Get the subjects from the project
     subject_list = Spout.get_subjects_from_project(project_id, subject_set_id=subject_set_id, only_orphans=False)
-
-    # Print the number of subjects in the project
-    if(len(subject_list) == 0):
-        print("There are no subjects in this project.")
-        return None
 
     if(subject_set_id is None):
         print("There are {} subjects in this project.".format(len(subject_list)))
@@ -253,7 +249,7 @@ def subjectCSVDiscriminator():
         subject_csv_discriminator.saveResultToCSV(valid_subjects, "subject_csv_discriminator_example_result.csv")
 
 if (__name__ == "__main__"):
-    metadataDiscrimination()
+    #metadataDiscrimination()
     subjectDiscrimination()
-    csvDiscriminator()
-    subjectCSVDiscriminator()
+    #csvDiscriminator()
+    #subjectCSVDiscriminator()

@@ -18,8 +18,10 @@ def fix_python_magic_install_order():
     python_magic_version = python_magic.split('==')[1]
 
     if(len(python_magic_version) != 0):
+        subprocess.call(['pip', 'uninstall', f'python-magic=={python_magic_version}'])
         subprocess.call(['pip', 'install', f'python-magic=={python_magic_version}'])
     else:
+        subprocess.call(['pip', 'uninstall', 'python-magic'])
         subprocess.call(['pip', 'install', 'python-magic'])
 
     python_magic_bin = [line for line in requirements if 'python-magic-bin' in line]
