@@ -7,30 +7,32 @@ with open('requirements.txt', encoding="utf-16") as f:
 # This fixes an import bug with the python-magic and python-magic-bin packages.
 # https://github.com/zooniverse/panoptes-python-client/issues/264
 def fix_python_magic_install_order():
+    subprocess.call(['pip', 'uninstall', f'python-magic'])
+
     python_magic = [line for line in requirements if 'python-magic' in line]
-    if(len(python_magic) != 1):
+    if (len(python_magic) != 1):
         for p in python_magic:
-            if("bin" in p):
+            if ("bin" in p):
                 python_magic.remove(p)
-        if(len(python_magic) != 1):
-            raise Exception(f'python-magic requirement not found in requirements.txt or found multiple times: \'{python_magic}\'')
+        if (len(python_magic) != 1):
+            raise Exception(
+                f'python-magic requirement not found in requirements.txt or found multiple times: \'{python_magic}\'')
     python_magic = python_magic[0]
     python_magic_version = python_magic.split('==')[1]
 
-    if(len(python_magic_version) != 0):
-        subprocess.call(['pip', 'uninstall', f'python-magic=={python_magic_version}'])
+    if (len(python_magic_version) != 0):
         subprocess.call(['pip', 'install', f'python-magic=={python_magic_version}'])
     else:
-        subprocess.call(['pip', 'uninstall', 'python-magic'])
         subprocess.call(['pip', 'install', 'python-magic'])
 
     python_magic_bin = [line for line in requirements if 'python-magic-bin' in line]
-    if(len(python_magic_bin) != 1):
-        raise Exception(f'python-magic-bin requirement not found in requirements.txt or found multiple times: \'{python_magic_bin}\'')
+    if (len(python_magic_bin) != 1):
+        raise Exception(
+            f'python-magic-bin requirement not found in requirements.txt or found multiple times: \'{python_magic_bin}\'')
 
     python_magic_bin = python_magic_bin[0]
     python_magic_bin_version = python_magic_bin.split('==')[1]
-    if(len(python_magic_bin_version) != 0):
+    if (len(python_magic_bin_version) != 0):
         subprocess.call(['pip', 'uninstall', f'python-magic-bin=={python_magic_bin_version}'])
         subprocess.call(['pip', 'install', f'python-magic-bin=={python_magic_bin_version}'])
     else:
