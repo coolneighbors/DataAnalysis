@@ -4,9 +4,9 @@ import os.path
 
 import matplotlib.pyplot as plt
 
-from Analyzer import Analyzer, Classifier
-from Aggregator import Aggregator
-from Decorators import ignore_warnings, timer
+from DataToolkit.Analyzer import Analyzer, Classifier
+from DataToolkit.Aggregator import Aggregator
+from DataToolkit.Decorators import ignore_warnings, timer
 import astropy.units as u
 
 def runAggregator(workflow_id=24299, version=1.6, classifications_csv="backyard-worlds-cool-neighbors-classifications.csv", workflows_csv="backyard-worlds-cool-neighbors-workflows.csv",config_directory="Config", extractions_directory="Extractions", reductions_directory="Reductions"):
@@ -36,7 +36,7 @@ subject_ids = analyzer.getSubjectIDs()
 test_usernames = ["Rattus", "pathfinder7567", "jcstew"]
 # TODO: Investigate why box search is not always providing same results as cone search
 if (__name__ == "__main__"):
-    pass
+    analyzer.classifier.plotAccuracyVsClassificationTotals(include_logged_out_users=True, default_insufficient_classifications=True, log_plot=True, classification_minimum=0, verified_classifications_minimum=10, accuracy_threshold=0)
 
 
 

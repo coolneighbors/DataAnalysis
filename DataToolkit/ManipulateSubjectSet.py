@@ -9,11 +9,11 @@ from panoptes_client import Subject
 from unWISE_verse.Login import Login
 from unWISE_verse.Spout import Spout
 
-from Aggregator import Aggregator
-from ConditionalFunctions import *
-from Decorators import timer
+from DataToolkit.Aggregator import Aggregator
+from DataToolkit.ConditionalFunctions import *
+from DataToolkit.Decorators import timer
 from unWISE_verse.MetadataPointers import generate_VizieR_url
-from Discriminator import Discriminator, SubjectDiscriminator, CSVDiscriminator, SubjectCSVDiscriminator
+from DataToolkit.Discriminator import Discriminator, SubjectDiscriminator, CSVDiscriminator, SubjectCSVDiscriminator
 
 # Login
 login = Spout.requestLogin()

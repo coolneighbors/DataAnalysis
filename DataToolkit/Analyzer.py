@@ -19,15 +19,14 @@ import matplotlib.pyplot as plt
 import functools
 
 import panoptes_client
-import unWISE_verse
 from astropy.coordinates import SkyCoord
 from unWISE_verse.Spout import Spout, check_login
 import astropy.units as u
 from astropy.time import Time
 from typing import List, Dict, Tuple, Union, Optional, TextIO, Any, Callable, Iterable, Set
-from Searcher import SimbadSearcher, GaiaSearcher
-from Plotter import SubjectCSVPlotter
-from Decorators import ignore_warnings, multioutput, plotting
+from DataToolkit.Searcher import SimbadSearcher, GaiaSearcher
+from DataToolkit.Plotter import SubjectCSVPlotter
+from DataToolkit.Decorators import ignore_warnings, multioutput, plotting
 # TODO: Add a weighting system for users' classifications based on their accuracy on the known subjects
 # TODO: Check hashed IP's to see if they're the same user as a logged-in user for classification counts, etc.
 # TODO: Redo documentation for Analyzer class and add type hints, result hints, and docstrings for all methods
@@ -1657,6 +1656,21 @@ class Classifier:
 
         ax.set_xticks(x)
         ax.set_xticklabels(most_accurate_users, ha='right', va='top', rotation=45, color="black")
+
+    @plotting
+    def plotAccuracyVsClassificationTotals(self, include_logged_out_users=False, default_insufficient_classifications=True, log_plot=True, classification_minimum=0, verified_classifications_minimum=0, accuracy_threshold=0.0, **kwargs):
+        usernames = self.getMostAccurateUsernames(include_logged_out_users=include_logged_out_users, default_insufficient_classifications=default_insufficient_classifications, classification_minimum=classification_minimum, verified_classifications_minimum=verified_classifications_minimum, accuracy_threshold=accuracy_threshold)
+        accuracies = self.getUserAccuracy(usernames, default_insufficient_classifications=default_insufficient_classifications)
+        classification_totals = self.analyzer.getTotalClassificationsByUser(usernames)
+        print(f"Plotting performance for {len(usernames)} users.")
+
+        plt.scatter(classification_totals, accuracies, c=accuracies, cmap='viridis', edgecolor='none', **kwargs)
+        plt.colorbar(label="User Accuracy")
+        plt.title("Accuracy vs. Number of Classifications")
+        plt.xlabel("Number of Classifications", fontsize=14)
+        if(log_plot):
+            plt.xscale("log")
+        plt.ylabel("User Accuracy", fontsize=14)
 
 
 

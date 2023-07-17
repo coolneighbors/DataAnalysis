@@ -22,7 +22,7 @@ from matplotlib.lines import Line2D
 from matplotlib.patches import Rectangle
 from matplotlib.transforms import Bbox
 import mplcursors
-from Decorators import ignore_warnings, plotting
+from DataToolkit.Decorators import ignore_warnings, plotting
 
 # TODO: Add documentation for Searcher classes
 

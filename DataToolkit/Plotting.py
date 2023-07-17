@@ -4,10 +4,10 @@ from matplotlib import pyplot as plt
 from unWISE_verse.Login import Login
 from unWISE_verse.Spout import Spout
 
-from ConditionalFunctions import *
+from DataToolkit.ConditionalFunctions import *
 
 import Plotter
-from Discriminator import SubjectDiscriminator, CSVDiscriminator, SubjectCSVDiscriminator
+from DataToolkit.Discriminator import SubjectDiscriminator, CSVDiscriminator, SubjectCSVDiscriminator
 
 # Login
 login = Spout.requestLogin()
