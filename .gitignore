@@ -9,4 +9,6 @@
 *.pickle
 *.lnk
 *.png
+!/DataToolkit/Examples/JupyterNotebooks/Discriminating/CSVDiscriminator/Breakfast_CSV_Image.png
+!/DataToolkit/Examples/JupyterNotebooks/Discriminating/Discriminator/Example_Metadata_Table.png
 .DS_Store
