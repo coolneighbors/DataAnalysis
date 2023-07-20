@@ -37,32 +37,75 @@ def multioutput(func):
 def plotting(func):
     @functools.wraps(func)
     def keyword_argument_handler(*args, **kwargs):
-        plotting_kwargs = {"show": (plt.show, None)}
+        # Has the form of (function, argument, keyword_arguments)
+        def create_plotting_dictionary(function, positional_arguments=(), keyword_arguments={}):
+            if (positional_arguments is None):
+                positional_arguments = ()
+            elif (not isinstance(positional_arguments, tuple)):
+                positional_arguments = (positional_arguments,)
+
+            if (keyword_arguments is None):
+                keyword_arguments = {}
+            elif (not isinstance(keyword_arguments, dict)):
+                raise ValueError(f"Keyword arguments '{keyword_arguments}' must be a dictionary.")
+
+            return {"function": function, "positional_arguments": positional_arguments, "keyword_arguments": keyword_arguments}
+
+        plotting_kwargs = {"show": create_plotting_dictionary(plt.show)}
+
+        create_new_figure = kwargs.pop("new_figure", True)
+
+        if (create_new_figure):
+            plt.figure()
 
         if ("title" in kwargs):
             title = kwargs["title"]
             del kwargs["title"]
-            plotting_kwargs["title"] = (plt.title, title)
+            title_fontsize = kwargs.pop("title_fontsize", 12)
+            plotting_kwargs["title"] = create_plotting_dictionary(plt.title, title, {"fontsize": title_fontsize})
+
+        if("title_fontsize" in kwargs):
+            title_fontsize = kwargs["title_fontsize"]
+            del kwargs["title_fontsize"]
+            title = plt.gca().title
+            plotting_kwargs["title_fontsize"] = create_plotting_dictionary(title.set_fontsize, title_fontsize)
 
         if ("xlabel" in kwargs):
             xlabel = kwargs["xlabel"]
             del kwargs["xlabel"]
-            plotting_kwargs["xlabel"] = (plt.xlabel, xlabel)
+            axis_fontsize = kwargs.get("axis_fontsize", 10)
+            plotting_kwargs["xlabel"] = create_plotting_dictionary(plt.xlabel, xlabel, {"fontsize": axis_fontsize})
 
         if ("ylabel" in kwargs):
             ylabel = kwargs["ylabel"]
             del kwargs["ylabel"]
-            plotting_kwargs["ylabel"] = (plt.ylabel, ylabel)
+            axis_fontsize = kwargs.get("axis_fontsize", 10)
+            plotting_kwargs["ylabel"] = create_plotting_dictionary(plt.ylabel, ylabel, {"fontsize": axis_fontsize})
+
+        if ("axis_fontsize" in kwargs):
+            axis_fontsize = kwargs["axis_fontsize"]
+            del kwargs["axis_fontsize"]
+            x_axis = plt.gca().xaxis
+            x_label = x_axis.get_label()
+            y_axis = plt.gca().yaxis
+            y_label = y_axis.get_label()
+            axis_labels_set_fontsize = lambda fontsize: (x_label.set_fontsize(fontsize), y_label.set_fontsize(fontsize))
+            plotting_kwargs["axis_fontsize"] = create_plotting_dictionary(axis_labels_set_fontsize, axis_fontsize)
 
         if ("xlim" in kwargs):
             xlim = kwargs["xlim"]
             del kwargs["xlim"]
-            plotting_kwargs["xlim"] = (plt.xlim, xlim)
+            plotting_kwargs["xlim"] = create_plotting_dictionary(plt.xlim, xlim)
 
         if ("ylim" in kwargs):
             ylim = kwargs["ylim"]
             del kwargs["ylim"]
-            plotting_kwargs["ylim"] = (plt.ylim, ylim)
+            plotting_kwargs["ylim"] = create_plotting_dictionary(plt.ylim, ylim)
+
+        if ("figsize" in kwargs):
+            figsize = kwargs["figsize"]
+            del kwargs["figsize"]
+            plotting_kwargs["figsize"] = create_plotting_dictionary(plt.gcf().set_size_inches, figsize)
 
         if("show" in kwargs):
             show = kwargs["show"]
@@ -74,27 +117,37 @@ def plotting(func):
             save = kwargs["save"]
             del kwargs["save"]
             if(save):
-                filename = kwargs.get("filename", func.__qualname__ + ".png")
-                plotting_kwargs["save"] = (plt.savefig, filename)
+                filename = kwargs.pop("filename", func.__qualname__ + ".png")
+                save_kwargs = {"dpi" : 300}
+                plotting_kwargs["save"] = create_plotting_dictionary(plt.savefig, filename, save_kwargs)
 
+        # Run the plotting function
         f = func(*args, **kwargs)
-        show_tuple = plotting_kwargs.pop("show", None)
-        for key, value in plotting_kwargs.items():
-            if (value is None):
+
+        final_keywords = ["save", "show"]
+        final_keywords_dictionaries = [plotting_kwargs.pop(keyword, None) for keyword in final_keywords]
+
+        def run_keyword_function(plotting_dictionary, verbose=False):
+            function = plotting_dictionary["function"]
+            positional_arguments = plotting_dictionary["positional_arguments"]
+            keyword_arguments = plotting_dictionary["keyword_arguments"]
+            if(verbose):
+                print(f"Running function {function.__name__} with positional arguments {positional_arguments} and keyword arguments {keyword_arguments}")
+            function(*positional_arguments, **keyword_arguments)
+
+        # Run the plotting functions
+        for key, plotting_dictionary in plotting_kwargs.items():
+            if (plotting_dictionary is None):
                 raise ValueError(f"Keyword argument '{key}' cannot be None.")
 
-            function, arguments = value
+            run_keyword_function(plotting_dictionary)
 
-            if (arguments is None):
-                function()
-            else:
-                if(not isinstance(arguments, tuple)):
-                    arguments = (arguments,)
-                function(*arguments)
+        # Run the plotting functions which occur after the main plotting functions
+        for final_keywords_dictionary in final_keywords_dictionaries:
+            if(final_keywords_dictionary is not None):
+                run_keyword_function(final_keywords_dictionary)
 
-        if(show_tuple is not None):
-            show_tuple[0]()
-
+        # Return the plotting function's result
         return f
 
     return keyword_argument_handler

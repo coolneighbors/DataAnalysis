@@ -4,6 +4,7 @@ import inspect
 import math
 import os
 import pickle
+import time
 import typing
 import warnings
 from copy import copy
@@ -20,13 +21,14 @@ import functools
 
 import panoptes_client
 from astropy.coordinates import SkyCoord
+from tqdm import tqdm
 from unWISE_verse.Spout import Spout, check_login
 import astropy.units as u
 from astropy.time import Time
 from typing import List, Dict, Tuple, Union, Optional, TextIO, Any, Callable, Iterable, Set
 from DataToolkit.Searcher import SimbadSearcher, GaiaSearcher
 from DataToolkit.Plotter import SubjectCSVPlotter
-from DataToolkit.Decorators import ignore_warnings, multioutput, plotting
+from DataToolkit.Decorators import ignore_warnings, multioutput, plotting, timer
 # TODO: Add a weighting system for users' classifications based on their accuracy on the known subjects
 # TODO: Check hashed IP's to see if they're the same user as a logged-in user for classification counts, etc.
 # TODO: Redo documentation for Analyzer class and add type hints, result hints, and docstrings for all methods
@@ -128,31 +130,46 @@ def uses_user_identifiers(func):
     return conversion_wrapper
 
 
-def days_since_launch():
-    launch_day = datetime.date(2023, 6, 27)
-    today = datetime.date.today()
+def days_since_launch(launch_day=datetime.date(2023, 6, 27), today=datetime.date.today()):
     return (today - launch_day).days + 1
 
 class Analyzer:
-    def __init__(self, extracted_file: file_typing, reduced_file: file_typing, subjects_file: Optional[file_typing] = None, save_login: bool = True) -> None:
+    def __init__(self, extracted_file: file_typing, reduced_file: file_typing, subjects_file: Optional[file_typing] = None) -> None:
         # Verify that the extracted_file is a valid file
 
-        self.extracted_file, self.reduced_file= Analyzer.verifyFile((extracted_file, reduced_file), required_file_type=".csv")
+        self.extracted_file, self.reduced_file = Analyzer.verifyFile((extracted_file, reduced_file), required_file_type=".csv")
 
         # Read the files as Pandas DataFrames
         self.extracted_dataframe = pd.read_csv(self.extracted_file)
         self.reduced_dataframe = pd.read_csv(self.reduced_file)
 
+        self.subject_ids_dictionary = {}
+
         # Verify that the subjects_file is a valid file, if provided.
         if (subjects_file is not None):
             self.subjects_file = subjects_file
             self.subjects_dataframe = pd.read_csv(self.subjects_file)
+            self.subject_ids_dictionary = {int(subject_id): int(subject_id) for subject_id in self.reduced_dataframe["subject_id"].values if subject_id in self.subjects_dataframe["subject_id"].values}
+            print("You are using the offline Analyzer.")
         else:
             # If no subjects_file is provided, then the user must be logged in to access the subjects.
             self.subjects_file = None
             self.subjects_dataframe = None
             self.subject_set_id = None
-            self.login(save_login)
+            self.login()
+            print("You are using the online Analyzer.")
+            self.subject_dictionary = {}
+            subject_ids = [int(subject_id) for subject_id in self.reduced_dataframe["subject_id"].values]
+            with tqdm(total=len(subject_ids), desc="Loading subjects from Zooniverse", unit="subject") as progress_bar:
+                for subject_id in subject_ids:
+                    subject = Spout.get_subject(subject_id)
+                    if(subject is not None):
+                        self.subject_dictionary[subject_id] = subject
+                        self.subject_ids_dictionary[subject_id] = subject_id
+                    else:
+                        warnings.warn(f"Could not find subject with ID {subject_id}.")
+                    progress_bar.update(1)
+            print(f"Finished loading {len(self.subject_dictionary)} subjects from Zooniverse.")
 
         self.classifier = Classifier(self)
 
@@ -172,8 +189,13 @@ class Analyzer:
                 Defaults to 'analyzer.pickle'
         """
 
+        if(self.subjects_file is None):
+            raise ValueError("Cannot save online Analyzer.")
+
         with open(filename, 'wb') as file:
             pickle.dump(self, file)
+
+        print(f"Saved Analyzer object as '{filename}'")
 
     @staticmethod
     def load(filename='analyzer.pickle'):
@@ -194,6 +216,7 @@ class Analyzer:
 
         with open(filename, 'rb') as file:
             analyzer = pickle.load(file)
+            print(f"Loaded Analyzer object from '{filename}'")
             return analyzer
 
 
@@ -263,20 +286,24 @@ class Analyzer:
         project_id, self.subject_set_id = Spout.requestZooniverseIDs(save=save)
 
         # Create Spout object to access the Zooniverse project
-        Spout(project_identifier=project_id, login=login, display_printouts=True)
+        Spout(project_identifier=project_id, login=login, display_printouts=False)
 
     # Methods related to classifications
     # ------------------------------------------------------------------------------------------------------------------
     # All classifications methods
     def getTotalClassifications(self):
-        # Return the number of classifications
-        return len(self.extracted_dataframe)
+        # Return the number of classifications in the extracted file
+        subject_ids = self.getSubjectIDs()
+        classification_dictionaries = self.getClassificationsForSubject(subject_ids, weighted=False)
+        total_classifications = sum(classification_dictionary["total"] for classification_dictionary in classification_dictionaries)
+        return total_classifications
 
     @plotting
     def plotClassificationDistribution(self, total_subject_count=None, **kwargs):
+        extracted_file_datetime = datetime.datetime.fromtimestamp(os.path.getmtime(self.extracted_file))
 
         # Set the default title
-        plt.title(f"Classification Distribution: Day {days_since_launch()}")
+        plt.title(f"Classification Distribution: Day {days_since_launch(today=extracted_file_datetime.date())}")
 
         # Set the default x and y labels
         plt.xlabel("Number of Classifications")
@@ -290,6 +317,10 @@ class Analyzer:
             plt.text(key, number_of_classifications_dict[key], number_of_classifications_dict[key], ha='center', va='bottom')
 
         plt.xticks(range(len(number_of_classifications_dict)))
+
+        total_classifications = sum(key*value for key, value in number_of_classifications_dict.items())
+        # Add a legend with the total number of classifications
+        plt.legend([f"Total Classifications: {total_classifications}"])
 
     def computeTimeStatisticsForClassifications(self):
 
@@ -336,13 +367,21 @@ class Analyzer:
     def getCountDictionaryOfClassifications(self, total_subject_count=None):
         subject_ids = self.getSubjectIDs()
         number_of_classifications_dict = {}
+
         for subject_id in subject_ids:
             classification_dict = self.getClassificationsForSubject(subject_id)
+
             total_classifications = classification_dict['yes'] + classification_dict['no']
             if (total_classifications in number_of_classifications_dict):
                 number_of_classifications_dict[total_classifications] += 1
             else:
                 number_of_classifications_dict[total_classifications] = 1
+
+        counts = range(1, max(number_of_classifications_dict.keys())+1)
+
+        for count in counts:
+            if(count not in number_of_classifications_dict):
+                number_of_classifications_dict[count] = 0
 
         if (total_subject_count is not None):
             number_of_classifications_dict[0] = total_subject_count - len(subject_ids)
@@ -374,14 +413,14 @@ class Analyzer:
         return len(self.getClassificationsByUser(user_identifier))
 
     # Top users classification methods
-    def getTotalClassificationsByTopUsers(self, count_threshold=None, percentile=None):
-        top_users_dict = self.getClassificationDictionaryOfTopUsers(count_threshold=count_threshold,
+    def getTotalClassificationsByTopUsers(self, classification_threshold=None, percentile=None):
+        top_users_dict = self.getClassificationDictionaryOfTopUsers(classification_threshold=classification_threshold,
                                                                     percentile=percentile)
         return sum(top_users_dict.values())
 
     @plotting
-    def plotTotalClassificationsByTopUsers(self, count_threshold=None, percentile=None, **kwargs):
-        top_users_dict = self.getClassificationDictionaryOfTopUsers(count_threshold=count_threshold, percentile=percentile)
+    def plotTotalClassificationsByTopUsers(self, classification_threshold=None, percentile=None, **kwargs):
+        top_users_dict = self.getClassificationDictionaryOfTopUsers(classification_threshold=classification_threshold, percentile=percentile)
         # Plot the number of classifications made by each user but stop names from overlapping
         usernames = list(top_users_dict.keys())
         user_counts = list(top_users_dict.values())
@@ -389,37 +428,53 @@ class Analyzer:
         x = np.arange(len(top_users_dict))
 
         # Create the bar plot
-        fig, ax = plt.subplots()
+        ax = plt.gca()
 
         # Set the default title
         if (percentile is not None):
             plt.title(f"Users in the Top {100 - percentile}% of Classifications")
-        elif (count_threshold is not None):
-            plt.title(f"Users with More Than {count_threshold} Classifications")
+        elif (classification_threshold is not None):
+            plt.title(f"Users with More Than {classification_threshold} Classifications")
 
         # Set the default y label
         plt.ylabel("Number of Classifications", fontsize=15)
 
+        anonymous = kwargs.pop("anonymous", False)
+
+        if (not anonymous):
+            ax.set_xticks(x)
+            ax.set_xticklabels(usernames, ha='right', va='top', rotation=45, color="black")
+        else:
+            ax.set_xticks([])
+            ax.set_xticklabels([])
+
         bars = ax.bar(x, user_counts, **kwargs)
 
+        offset = 10
+        user_counts_fontsize = 7
         for i, bar in enumerate(bars):
             # Display the user's count
-            offset = 10
-            ax.text(bar.get_x() + bar.get_width() / 2, user_counts[i] + offset, str(user_counts[i]), horizontalalignment='center', verticalalignment='bottom', fontsize=10)
+            ax.text(bar.get_x() + bar.get_width() / 2, user_counts[i] + offset, str(user_counts[i]), horizontalalignment='center', verticalalignment='bottom', fontsize=user_counts_fontsize)
 
-        ax.set_xticks(x)
-        ax.set_xticklabels(usernames, ha='right', va='top', rotation=45, color="black")
+        # Add a legend which provides the total number of classifications of all the top users
+        total_classification_count = self.getTotalClassifications()
+        top_users_total = sum(user_counts)
+        ax.legend([f"Total: {top_users_total}, Contribution Percentage: {round((top_users_total/total_classification_count) * 100, 2)}%"], loc='upper right')
 
     # Subject classification methods
     @multioutput
     @uses_subject_ids
     def getClassificationsForSubject(self, subject_input, weighted=False):
 
+        if(not self.subjectExists(subject_input)):
+            warnings.warn(f"Subject {subject_input} does not exist, returning None.")
+            return None
+
         if(not weighted):
             subject_dataframe = self.getSubjectDataframe(subject_input, dataframe_type="reduced")
 
             if (len(subject_dataframe) == 0):
-                warnings.warn(f"Subject {subject_input} does not exist, returning None.")
+                warnings.warn(f"Subject {subject_input} is not in the reduced file, returning None.")
                 return None
 
             try:
@@ -442,11 +497,7 @@ class Analyzer:
             subject_dataframe = self.getSubjectDataframe(subject_input, dataframe_type="extracted")
 
             if (len(subject_dataframe) == 0):
-                warnings.warn(f"Subject {subject_input} does not exist, returning None.")
-                return None
-
-            if (len(subject_dataframe) == 0):
-                warnings.warn(f"Subject {subject_input} does not exist, returning None.")
+                warnings.warn(f"Subject {subject_input} is not in the extracted file, returning None.")
                 return None
 
             yes_count = 0
@@ -729,12 +780,12 @@ class Analyzer:
         return Spout.get_user(user_identifier)
 
     # Methods related to top users
-    def getClassificationDictionaryOfTopUsers(self, count_threshold=None, percentile=None):
+    def getClassificationDictionaryOfTopUsers(self, classification_threshold=None, percentile=None):
 
-        if (count_threshold is None and percentile is None):
-            raise ValueError("You must provide either a count_threshold or a percentile.")
-        elif(count_threshold is not None and percentile is not None):
-            raise ValueError("You cannot provide both a count_threshold and a percentile.")
+        if (classification_threshold is None and percentile is None):
+            raise ValueError("You must provide either a classification_threshold or a percentile.")
+        elif(classification_threshold is not None and percentile is not None):
+            raise ValueError("You cannot provide both a classification_threshold and a percentile.")
 
         unique_user_identifiers = self.getUniqueUserIdentifiers(user_identifier="username")
         user_classifications_dict = {}
@@ -750,34 +801,34 @@ class Analyzer:
 
         top_users_dict = {}
 
-        def userMeetsRequirements(user, count_threshold, percentile):
+        def userMeetsRequirements(user, classification_threshold, percentile):
             if(percentile is not None):
                 if(sorted_user_classifications_dict[user] >= np.percentile(list(sorted_user_classifications_dict.values()), percentile)):
                     return True
                 else:
                     return False
             else:
-                if(sorted_user_classifications_dict[user] >= count_threshold):
+                if(sorted_user_classifications_dict[user] >= classification_threshold):
                     return True
                 else:
                     return False
 
         for user in sorted_user_classifications_dict:
-            if(userMeetsRequirements(user, count_threshold, percentile)):
+            if(userMeetsRequirements(user, classification_threshold, percentile)):
                 top_users_dict[user] = sorted_user_classifications_dict[user]
 
         return top_users_dict
 
-    def getTopUsernames(self, count_threshold=None, percentile=None):
-        top_usernames_dict = self.getClassificationDictionaryOfTopUsers(count_threshold=count_threshold, percentile=percentile)
+    def getTopUsernames(self, classification_threshold=None, percentile=None):
+        top_usernames_dict = self.getClassificationDictionaryOfTopUsers(classification_threshold=classification_threshold, percentile=percentile)
         return list(top_usernames_dict.keys())
 
-    def getTopUsernamesCount(self, count_threshold=None, percentile=None):
-        top_users_dict = self.getClassificationDictionaryOfTopUsers(count_threshold=count_threshold,percentile=percentile)
+    def getTopUsernamesCount(self, classification_threshold=None, percentile=None):
+        top_users_dict = self.getClassificationDictionaryOfTopUsers(classification_threshold=classification_threshold,percentile=percentile)
         return len(top_users_dict)
 
-    def getTopUsers(self, count_threshold=None, percentile=None):
-        top_usernames = self.getTopUsernames(count_threshold=count_threshold, percentile=percentile)
+    def getTopUsers(self, classification_threshold=None, percentile=None):
+        top_usernames = self.getTopUsernames(classification_threshold=classification_threshold, percentile=percentile)
         return self.getUser(top_usernames)
 
     # Methods related to subjects and subject metadata
@@ -785,14 +836,19 @@ class Analyzer:
     # Principle method for getting subjects
     def getSubjectIDs(self):
         # Return the list of subject IDs
-        return [int(subject_id) for subject_id in self.reduced_dataframe["subject_id"].values]
+        return list(self.subject_ids_dictionary.values())
 
     # Spout-interface method
     @multioutput
     @uses_subject_ids
     def getSubject(self, subject_input) -> Union[panoptes_client.Subject, List[panoptes_client.Subject]]:
         # Get the subject with the given subject ID in the subject set with the given subject set ID
-        return Spout.get_subject(subject_input, self.subject_set_id)
+        if(self.subjects_file is not None):
+            raise ValueError("It is improper to call getSubject() when a subjects file has been provided.")
+
+        subject = self.subject_dictionary.get(subject_input, None)
+        return subject
+
 
     # Subject dataframe methods
     @multioutput
@@ -805,6 +861,10 @@ class Analyzer:
 
             if(not isinstance(subject_input, int)):
                 raise ValueError("The subject_id must be an integer.")
+
+            if(not self.subjectExists(subject_input)):
+                warnings.warn(f"Subject {subject_input} does not exist, returning empty Dataframe.")
+                return pd.DataFrame()
 
             if (dataframe_type == "default"):
                 # If it is default, then return the metadata of the subject as a dataframe
@@ -850,18 +910,16 @@ class Analyzer:
     # Subject metadata methods
     @multioutput
     @uses_subject_ids
-    def checkIfSubjectExists(self, subject_input):
-
-        # Get the subject's metadata
-
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            metadata = self.getSubjectMetadata(subject_input)
-            return metadata is not None
+    def subjectExists(self, subject_input):
+        return subject_input in self.subject_ids_dictionary
 
     @multioutput
     @uses_subject_ids
     def getSubjectMetadata(self, subject_input):
+
+        if(not self.subjectExists(subject_input)):
+            warnings.warn(f"Subject ID {subject_input} was not found: Returning None")
+            return None
 
         # Get the subject with the given subject ID
         if(self.subjects_file is not None):
@@ -884,11 +942,8 @@ class Analyzer:
     @uses_subject_ids
     def getSubjectMetadataField(self, subject_input, field_name):
         # Get the subject metadata for the subject with the given subject ID
-        subject_metadata = self.getSubjectMetadata(subject_input)
 
-        if (subject_metadata is None):
-            warnings.warn(f"Subject ID {subject_input} was not found: Returning None")
-            return None
+        subject_metadata = self.getSubjectMetadata(subject_input)
 
         # Get the metadata field with the given field name
         field_value = subject_metadata.get(field_name, None)
@@ -1397,7 +1452,13 @@ class Classifier:
         self.user_information = {}
         self.analyzer = analyzer
         print("Calculating user performances...")
-        ignore_warnings(self.calculateAllUserPerformances)(include_logged_out_users=True)
+        user_identifiers = self.analyzer.getUniqueUserIdentifiers(user_identifier="username", include_logged_out_users=True)
+        total_users = len(user_identifiers)
+        # Create a progress bar
+        progress_bar = tqdm(total=total_users)
+        for index, user_identifier in enumerate(user_identifiers):
+            ignore_warnings(self.calculateUserPerformance)(user_identifier)
+            progress_bar.update(1)
         print("User performances calculated.")
 
     @multioutput
@@ -1509,20 +1570,20 @@ class Classifier:
         else:
             raise ValueError(f"User identifier {user_identifier} already exists in user performance dictionary.")
 
-    def calculateAllUserPerformances(self, include_logged_out_users=False):
+    def calculateAllUserPerformances(self, include_logged_out_users=True):
         user_identifiers = self.analyzer.getUniqueUserIdentifiers(user_identifier="username", include_logged_out_users=include_logged_out_users)
         self.calculateUserPerformance(user_identifiers)
 
-    def getAllUserAccuracies(self, include_logged_out_users=False, default_insufficient_classifications=True):
+    def getAllUserAccuracies(self, include_logged_out_users=True, default_insufficient_classifications=True):
         user_identifiers = self.analyzer.getUniqueUserIdentifiers(user_identifier="username", include_logged_out_users=include_logged_out_users)
         return self.getUserAccuracy(user_identifiers, default_insufficient_classifications=default_insufficient_classifications)
 
-    def getAllUserInformation(self, include_logged_out_users=False, default_insufficient_classifications=True):
+    def getAllUserInformation(self, include_logged_out_users=True, default_insufficient_classifications=True):
         user_identifiers = self.analyzer.getUniqueUserIdentifiers(user_identifier="username", include_logged_out_users=include_logged_out_users)
         user_information_dictionaries = self.getUserInformation(user_identifiers, default_insufficient_classifications=default_insufficient_classifications)
         return {user_identifier: user_information_dictionary for user_identifier, user_information_dictionary  in zip(user_identifiers, user_information_dictionaries)}
 
-    def getMostAccurateUsernames(self, include_logged_out_users=False, default_insufficient_classifications=True, classification_minimum=0, verified_classifications_minimum=0, accuracy_threshold=0.0):
+    def getMostAccurateUsernames(self, include_logged_out_users=True, default_insufficient_classifications=True, classification_threshold=0, verified_classifications_threshold=0, accuracy_threshold=0.0):
         user_information_dictionaries = copy(self.getAllUserInformation(include_logged_out_users=include_logged_out_users, default_insufficient_classifications=default_insufficient_classifications))
         new_user_information_dictionaries = copy(user_information_dictionaries)
         for user_identifier in user_information_dictionaries:
@@ -1531,9 +1592,9 @@ class Classifier:
             for subject_type in user_information_dictionaries[user_identifier]["Classifications"]:
                 total_verified_classifications += user_information_dictionaries[user_identifier]["Classifications"][subject_type]["total"]
 
-            if(total_classifications < classification_minimum):
+            if(total_classifications < classification_threshold):
                 del new_user_information_dictionaries[user_identifier]
-            elif(total_verified_classifications < verified_classifications_minimum):
+            elif(total_verified_classifications < verified_classifications_threshold):
                 del new_user_information_dictionaries[user_identifier]
             elif(user_information_dictionaries[user_identifier]["Performance"]["Accuracy"] is None):
                 del new_user_information_dictionaries[user_identifier]
@@ -1558,7 +1619,12 @@ class Classifier:
         user_classification_dataframe = pd.DataFrame.from_dict(user_classifications,  orient="index")
         user_classification_dataframe = user_classification_dataframe.rename(columns={"success": "Success", "failure": "Failure", "total": "Total"})
         formatted_accuracy = round(100 * user_accuracy, 2)
-        user_classification_dataframe.plot.bar(y=["Success", "Failure"], stacked=True, title=f"User Accuracy for {user_identifier}: {formatted_accuracy}%", **kwargs)
+
+        anonymous = kwargs.pop("anonymous", False)
+        if(anonymous):
+            user_identifier = "Anonymous"
+
+        user_classification_dataframe.plot.bar(y=["Success", "Failure"], stacked=True, title=f"User Accuracy for {user_identifier}: {formatted_accuracy}%", ax=plt.gca(), **kwargs)
 
         # Put the success percentage on the top of each bar
         index = 0
@@ -1573,16 +1639,20 @@ class Classifier:
         plt.xlabel("Subject Type")
         plt.ylabel("Number of Classifications")
 
-    def plotAllUsersPerformanceHistogram(self, include_logged_out_users=False, default_insufficient_classifications=True, **kwargs):
+    def plotAllUsersPerformanceHistogram(self, include_logged_out_users=True, default_insufficient_classifications=True, **kwargs):
         user_accuracies = self.getAllUserAccuracies(include_logged_out_users=include_logged_out_users, default_insufficient_classifications=default_insufficient_classifications)
-        plt.title("User Performance Histogram")
+        kwargs["title"] = "User Performance Histogram"
         self.plotPerformanceHistogram(user_accuracies, **kwargs)
 
-    def plotTopUsersPerformanceHistogram(self, count_threshold=None, percentile=None, default_insufficient_classifications=True, **kwargs):
-        top_usernames = self.analyzer.getTopUsernames(count_threshold=count_threshold, percentile=percentile)
-        print(f"Plotting performance histogram for {len(top_usernames)} users.")
+    def plotTopUsersPerformanceHistogram(self, classification_threshold=None, percentile=None, default_insufficient_classifications=True, **kwargs):
+        top_usernames = self.analyzer.getTopUsernames(classification_threshold=classification_threshold, percentile=percentile)
         top_user_accuracies = self.getUserAccuracy(top_usernames, default_insufficient_classifications=default_insufficient_classifications)
-        plt.title("Top User Performance Histogram")
+
+        if(classification_threshold is not None):
+            kwargs["title"] = f"Performance Histogram: Users With More Than {classification_threshold} Classifications"
+        elif(percentile is not None):
+            kwargs["title"] = f"Performance Histogram: Top {100-percentile}% of Users by Classifications"
+
         self.plotPerformanceHistogram(top_user_accuracies, **kwargs)
 
     @staticmethod
@@ -1595,9 +1665,12 @@ class Classifier:
         plt.xlabel("User Accuracy", fontsize=14)
         plt.ylabel("Number of Users", fontsize=14)
 
+        # Include a legend which shows the total number of users
+        plt.legend([f"Total Users: {len(accuracy_values)}"], fontsize=14)
+
     @plotting
-    def plotTopUsersPerformances(self, count_threshold=None, percentile=None, default_insufficient_classifications=True, **kwargs):
-        top_usernames = self.analyzer.getTopUsernames(count_threshold=count_threshold, percentile=percentile)
+    def plotTopUsersPerformances(self, classification_threshold=None, percentile=None, default_insufficient_classifications=True, **kwargs):
+        top_usernames = self.analyzer.getTopUsernames(classification_threshold=classification_threshold, percentile=percentile)
         print(f"Plotting performance for {len(top_usernames)} users.")
 
         top_user_accuracies = self.getUserAccuracy(top_usernames, default_insufficient_classifications=default_insufficient_classifications)
@@ -1609,16 +1682,25 @@ class Classifier:
         x = np.arange(len(top_usernames))
 
         # Create the bar plot
-        fig, ax = plt.subplots()
+        ax = plt.gca()
 
         # Set the default title
         if (percentile is not None):
             plt.title(f"Users in the Top {100 - percentile}% of Classifications")
-        elif (count_threshold is not None):
-            plt.title(f"Users with More Than {count_threshold} Classifications")
+        elif (classification_threshold is not None):
+            plt.title(f"Users with More Than {classification_threshold} Classifications")
 
         # Set the default y label
         plt.ylabel("User Accuracy", fontsize=15)
+
+        anonymous = kwargs.pop("anonymous", False)
+
+        if (not anonymous):
+            ax.set_xticks(x)
+            ax.set_xticklabels(top_usernames, ha='right', va='top', rotation=45, color="black")
+        else:
+            ax.set_xticks([])
+            ax.set_xticklabels([])
 
         bars = ax.bar(x, top_user_accuracies, **kwargs)
         for i, bar in enumerate(bars):
@@ -1626,13 +1708,9 @@ class Classifier:
             offset = 0.01
             ax.text(bar.get_x() + bar.get_width() / 2, top_user_accuracies[i] + offset, f"{round(100*top_user_accuracies[i], 2)}%", horizontalalignment='center', verticalalignment='bottom', fontsize=10)
 
-        ax.set_xticks(x)
-        ax.set_xticklabels(top_usernames, ha='right', va='top', rotation=45, color="black")
-
     @plotting
-    def plotMostAccurateUsers(self,  include_logged_out_users=False, default_insufficient_classifications=True, classification_minimum=0, verified_classifications_minimum=0, accuracy_threshold=0.0, **kwargs):
-        most_accurate_users = self.getMostAccurateUsernames(include_logged_out_users=include_logged_out_users, default_insufficient_classifications=default_insufficient_classifications, classification_minimum=classification_minimum, verified_classifications_minimum=verified_classifications_minimum, accuracy_threshold=accuracy_threshold)
-        print(f"Plotting performance for {len(most_accurate_users)} users.")
+    def plotMostAccurateUsers(self, include_logged_out_users=True, default_insufficient_classifications=True, classification_threshold=0, verified_classifications_threshold=0, accuracy_threshold=0.0, **kwargs):
+        most_accurate_users = self.getMostAccurateUsernames(include_logged_out_users=include_logged_out_users, default_insufficient_classifications=default_insufficient_classifications, classification_threshold=classification_threshold, verified_classifications_threshold=verified_classifications_threshold, accuracy_threshold=accuracy_threshold)
 
         most_accurate_users_accuracies = self.getUserAccuracy(most_accurate_users, default_insufficient_classifications=default_insufficient_classifications)
 
@@ -1640,37 +1718,59 @@ class Classifier:
         x = np.arange(len(most_accurate_users_accuracies))
 
         # Create the bar plot
-        fig, ax = plt.subplots()
+        ax = plt.gca()
 
         # Set the default title
-        plt.title(f"Most Accurate Users")
+        plt.title(f"Most Accurate Users with {classification_threshold}+ Classifications and {verified_classifications_threshold}+ Verified Classifications")
 
         # Set the default y label
         plt.ylabel("User Accuracy", fontsize=15)
 
+        anonymous = kwargs.pop("anonymous", False)
+
+        if (not anonymous):
+            ax.set_xticks(x)
+            ax.set_xticklabels(most_accurate_users, ha='right', va='top', rotation=45, color="black")
+        else:
+            ax.set_xticks([])
+            ax.set_xticklabels([])
+
         bars = ax.bar(x, most_accurate_users_accuracies, **kwargs)
+
+        user_accuracies_fontsize = 8
+        offset = 0.005
+        show_accuracy = True
         for i, bar in enumerate(bars):
             # Display the user's accuracy above the bar
-            offset = 0.01
-            ax.text(bar.get_x() + bar.get_width() / 2, most_accurate_users_accuracies[i] + offset, f"{round(100 * most_accurate_users_accuracies[i], 2)}%", horizontalalignment='center', verticalalignment='bottom', fontsize=10)
+            if(show_accuracy or abs(most_accurate_users_accuracies[i-1] - most_accurate_users_accuracies[i]) >= 0.02):
+                ax.text(bar.get_x() + bar.get_width() / 2, most_accurate_users_accuracies[i] + offset,f"{round(100 * most_accurate_users_accuracies[i], 1)}%", horizontalalignment='center', verticalalignment='bottom', fontsize=user_accuracies_fontsize)
+                show_accuracy = False
+            else:
+                show_accuracy = True
 
-        ax.set_xticks(x)
-        ax.set_xticklabels(most_accurate_users, ha='right', va='top', rotation=45, color="black")
+        # Include a legend which shows the total number of users
+        plt.legend([f"Total Users: {len(most_accurate_users_accuracies)}"], fontsize=14)
 
     @plotting
-    def plotAccuracyVsClassificationTotals(self, include_logged_out_users=False, default_insufficient_classifications=True, log_plot=True, classification_minimum=0, verified_classifications_minimum=0, accuracy_threshold=0.0, **kwargs):
-        usernames = self.getMostAccurateUsernames(include_logged_out_users=include_logged_out_users, default_insufficient_classifications=default_insufficient_classifications, classification_minimum=classification_minimum, verified_classifications_minimum=verified_classifications_minimum, accuracy_threshold=accuracy_threshold)
+    def plotAccuracyVsClassificationTotals(self, include_logged_out_users=True, default_insufficient_classifications=True, log_plot=True, classification_threshold=0, verified_classifications_threshold=0, accuracy_threshold=0.0, **kwargs):
+        usernames = self.getMostAccurateUsernames(include_logged_out_users=include_logged_out_users, default_insufficient_classifications=default_insufficient_classifications, classification_threshold=classification_threshold, verified_classifications_threshold=verified_classifications_threshold, accuracy_threshold=accuracy_threshold)
         accuracies = self.getUserAccuracy(usernames, default_insufficient_classifications=default_insufficient_classifications)
         classification_totals = self.analyzer.getTotalClassificationsByUser(usernames)
         print(f"Plotting performance for {len(usernames)} users.")
 
         plt.scatter(classification_totals, accuracies, c=accuracies, cmap='viridis', edgecolor='none', **kwargs)
         plt.colorbar(label="User Accuracy")
-        plt.title("Accuracy vs. Number of Classifications")
+        if(classification_threshold != 0 or verified_classifications_threshold != 0):
+            plt.title(f"Accuracy vs. Number of Classifications: {classification_threshold}+ Classifications and {verified_classifications_threshold}+ Verified Classifications")
+        else:
+            plt.title("Accuracy vs. Number of Classifications")
         plt.xlabel("Number of Classifications", fontsize=14)
         if(log_plot):
             plt.xscale("log")
         plt.ylabel("User Accuracy", fontsize=14)
+
+        # Include a legend which shows the total number of users
+        plt.legend([f"Total Users: {len(usernames)}"], fontsize=14)
 
 
 
