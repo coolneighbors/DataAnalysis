@@ -1,10 +1,17 @@
+import warnings
+
 import unWISE_verse.Spout
 from unWISE_verse.Spout import Spout
 
 def loggingInToZooniverse():
     # Get user's Zooniverse login information: username and password.
     # If you do not have a Zooniverse account, you can create one here: https://www.zooniverse.org/
-    login = Spout.requestLogin()
+
+    # This command will prompt the user to input their Zooniverse username and password via the console/terminal it is run within.
+    login = Spout.requestLogin(filename="login.pickle", save=True)
+
+    # When this is done once, if save is set to True, your login information will be locally saved to the filename.
+    # Which is login.pickle by default.
 
     # Use the login information to log in to Zooniverse. All future requests to Zooniverse via Spout will be made using this login.
     Spout.loginToZooniverse(login)
@@ -14,11 +21,19 @@ def gettingSubjects():
     # static methods have been added to the Spout class to allow for the use of Spout outside of the unWISE-verse user interface.
     # This allows for access to already uploaded subjects and subject sets and the ability to modify them.
 
-    project_id, subject_set_id = Spout.requestZooniverseIDs()
+    # Provide the project id and subject set id you wish to get subjects from.
+    # By default, the project ID and subject set ID are saved to the filenames "project_id.pickle" and "subject_set_id.pickle" and save is set to True.
+    project_id, subject_set_id = Spout.requestZooniverseIDs(filenames=["project_id.pickle", "subject_set_id.pickle"], save=True)
+
+    print("Warning: This will take a long time to run if there are a lot of subjects in the project.")
 
     # Get all subjects in the project.
     project_subjects = Spout.get_subjects_from_project(project_id, only_orphans=False)
     print(f"Number of subjects in the project: {len(project_subjects)}")
+
+    # Get all orphaned subjects in the project.
+    orphaned_project_subjects = Spout.get_subjects_from_project(project_id, only_orphans=True)
+    print(f"Number of orphaned subjects in the project: {len(orphaned_project_subjects)}")
 
     # Get all subjects in the subject set.
     subject_set_subjects = Spout.get_subjects_from_project(project_id, subject_set_id, only_orphans=False)
