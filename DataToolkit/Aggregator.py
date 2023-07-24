@@ -91,7 +91,7 @@ class Aggregator:
         ----------
             workflow_id : int
                 The ID of the workflow to be aggregated.
-            **kwargs : optional
+            **kwargs : dict
                 Optional arguments to be passed to the config command.
         """
 
@@ -113,7 +113,7 @@ class Aggregator:
         ----------
             workflow_id : int
                 The ID of the workflow to be aggregated.
-            **kwargs : optional
+            **kwargs : dict
                 Optional arguments to be passed to the config command.
         """
 
@@ -157,6 +157,7 @@ class Aggregator:
                     command_str += f" --{key}"
 
         # Run the command and capture the output
+        print(f"Running command: {command_str}")
         output = subprocess.check_output(command_str, shell=True)
 
         # Decode the output assuming it's in UTF-8 encoding
