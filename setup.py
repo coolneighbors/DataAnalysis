@@ -1,10 +1,8 @@
-import subprocess
+__requires__ = ['pip >= 23.2.1']
 from setuptools import setup
 
 with open('requirements.txt', encoding="utf-16") as f:
     requirements = f.read().splitlines()
-
-requirements.extend("pip>=23.2.1")
 
 setup(
     name='DataToolkit',
