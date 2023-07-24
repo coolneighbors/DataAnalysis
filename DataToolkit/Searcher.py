@@ -1,3 +1,4 @@
+import logging
 import re
 import warnings
 from abc import ABC, abstractmethod
@@ -24,7 +25,9 @@ from matplotlib.transforms import Bbox
 import mplcursors
 from DataToolkit.Decorators import ignore_warnings, plotting
 
-# TODO: Add documentation for Searcher classes
+
+logger = logging.getLogger("astroquery")
+logger.setLevel(logging.CRITICAL)
 
 # Create an InputError exception class with a message
 class InputError(Exception):
@@ -334,7 +337,8 @@ class Searcher(ABC):
         fig_size = kwargs.pop("fig_size", (10,10))
         style = kwargs.pop("style", astropy_mpl_style)
 
-        fig = plt.figure(figsize=fig_size)
+        fig = plt.gcf()
+        fig.set_size_inches(fig_size)
         plt.style.use(style)
 
         # Create a WCS object
@@ -722,7 +726,6 @@ class SimbadSearcher(Searcher):
                         box_search_string = f"region(box, {ra} -{dec}, {FOV}s {FOV}s)"
                     else:
                         box_search_string = f"region(box, {ra} +{dec}, {FOV}s {FOV}s)"
-                        print(box_search_string)
                     result_table = simbad_query.query_criteria(box_search_string)
                 elif (self.search_type == "Cone" or self.search_type == "Cone Search"):
                     result_table = simbad_query.query_region(self.search_coordinates, radius=self.search_input)

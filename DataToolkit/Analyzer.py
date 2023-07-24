@@ -1,6 +1,7 @@
 import datetime
 import functools
 import inspect
+import logging
 import math
 import os
 import pickle
@@ -389,9 +390,9 @@ class Analyzer:
         return number_of_classifications_dict
 
     # Subset of classifications method
-    def getSubsetTotalClassifications(self, minimum_count=0, total_subject_count=None):
+    def getSubsetOfTotalClassifications(self, minimum_subject_classification_count=0, total_subject_count=None):
         classification_count_dict = self.getCountDictionaryOfClassifications(total_subject_count)
-        return sum(value for key, value in classification_count_dict.items() if key >= minimum_count)
+        return sum(key*value for key, value in classification_count_dict.items() if key >= minimum_subject_classification_count)
 
     # User classification methods
     @uses_user_identifiers
@@ -770,7 +771,10 @@ class Analyzer:
             return list(self.extracted_dataframe[user_dataframe_key].unique())
         else:
             unique_users = list(self.extracted_dataframe[user_dataframe_key].unique())
-            logged_in_unique_users = [user for user in unique_users if "not-logged-in" not in user]
+            if(user_identifier == "username"):
+                logged_in_unique_users = [user for user in unique_users if "not-logged-in" not in user]
+            else:
+                logged_in_unique_users = unique_users
             return logged_in_unique_users
 
     # Spout-interface method
@@ -843,8 +847,9 @@ class Analyzer:
     @uses_subject_ids
     def getSubject(self, subject_input) -> Union[panoptes_client.Subject, List[panoptes_client.Subject]]:
         # Get the subject with the given subject ID in the subject set with the given subject set ID
+
         if(self.subjects_file is not None):
-            raise ValueError("It is improper to call getSubject() when a subjects file has been provided.")
+            return Spout.get_subject(subject_input)
 
         subject = self.subject_dictionary.get(subject_input, None)
         return subject
@@ -944,6 +949,10 @@ class Analyzer:
         # Get the subject metadata for the subject with the given subject ID
 
         subject_metadata = self.getSubjectMetadata(subject_input)
+
+        if(subject_metadata is None):
+            warnings.warn(f"Subject ID {subject_input} was not found: Returning None")
+            return None
 
         # Get the metadata field with the given field name
         field_value = subject_metadata.get(field_name, None)
@@ -1072,7 +1081,6 @@ class Analyzer:
     @multioutput
     @uses_subject_ids
     def sourceExistsInSimbadForSubject(self, subject_input, search_type="Box Search", FOV=120*u.arcsec, radius=60*u.arcsec):
-
         return len(self.getSimbadQueryForSubject(subject_input, search_type=search_type, FOV=FOV, radius=radius)) > 0
 
     # Gaia query methods
@@ -1148,7 +1156,6 @@ class Analyzer:
     @multioutput
     @uses_subject_ids
     def sourceExistsInGaiaForSubject(self, subject_input, search_type="Box Search", FOV=120*u.arcsec, radius=60*u.arcsec):
-
         return len(self.getGaiaQueryForSubject(subject_input, search_type=search_type, FOV=FOV, radius=radius)) > 0
 
     # Methods related to selecting acceptable subjects as candidates for review
@@ -1206,7 +1213,7 @@ class Analyzer:
         else:
             return False, subject_classifications
 
-    def findAcceptableCandidates(self, acceptance_ratio=None, acceptance_threshold=None, weighted=False, save=True):
+    def findAcceptableCandidates(self, acceptance_ratio=None, acceptance_threshold=0, weighted=False, save=True, verbose=False):
         subject_ids = self.getSubjectIDs()
         accepted_subjects = []
 
@@ -1218,7 +1225,8 @@ class Analyzer:
                 continue
 
             if (acceptable_boolean):
-                print("Subject " + str(subject_id) + f" is an acceptable candidate: {subject_classifications_dict}")
+                if(verbose):
+                    print("Subject " + str(subject_id) + f" is an acceptable candidate: {subject_classifications_dict}")
                 accepted_subjects.append(subject_id)
 
         if(save):
@@ -1228,34 +1236,42 @@ class Analyzer:
 
         return accepted_subjects
 
-    def sortAcceptableCandidatesByDatabase(self, accepted_subjects):
+    def sortAcceptableCandidatesByDatabase(self, accepted_subjects, verbose=False):
         not_in_simbad_subjects = []
         not_in_gaia_subjects = []
         not_in_either_subjects = []
 
-        for index, subject_id in enumerate(accepted_subjects):
-            print("Checking subject " + str(subject_id) + f" ({index + 1} out of {len(accepted_subjects)})")
-            database_check_dict, database_query_dict = self.checkSubjectFOV(subject_id)
-            no_database = not any(database_check_dict.values())
-            if (no_database):
-                print(f"Subject {subject_id} is not in either database.")
-                not_in_either_subjects.append(subject_id)
-                not_in_simbad_subjects.append(subject_id)
-                not_in_gaia_subjects.append(subject_id)
-            else:
-                for database_name, in_database in database_check_dict.items():
-                    if (not in_database):
-                        if (database_name == "SIMBAD"):
-                            print(f"Subject {subject_id} is not in SIMBAD.")
-                            not_in_simbad_subjects.append(subject_id)
-                        elif (database_name == "Gaia"):
-                            print(f"Subject {subject_id} is not in Gaia.")
-                            not_in_gaia_subjects.append(subject_id)
-                    else:
-                        if (database_name == "SIMBAD"):
-                            print(f"Subject {subject_id} is in SIMBAD.")
-                        elif (database_name == "Gaia"):
-                            print(f"Subject {subject_id} is in Gaia.")
+        with tqdm(total=len(accepted_subjects), unit="Subject") as pbar:
+            for index, subject_id in enumerate(accepted_subjects):
+                if(verbose):
+                    print("Checking subject " + str(subject_id) + f" ({index + 1} out of {len(accepted_subjects)})")
+                database_check_dict, database_query_dict = self.checkSubjectFOV(subject_id)
+                no_database = not any(database_check_dict.values())
+                if (no_database):
+                    if(verbose):
+                        print(f"Subject {subject_id} is not in either database.")
+                    not_in_either_subjects.append(subject_id)
+                    not_in_simbad_subjects.append(subject_id)
+                    not_in_gaia_subjects.append(subject_id)
+                else:
+                    for database_name, in_database in database_check_dict.items():
+                        if (not in_database):
+                            if (database_name == "SIMBAD"):
+                                if(verbose):
+                                    print(f"Subject {subject_id} is not in SIMBAD.")
+                                not_in_simbad_subjects.append(subject_id)
+                            elif (database_name == "Gaia"):
+                                if(verbose):
+                                    print(f"Subject {subject_id} is not in Gaia.")
+                                not_in_gaia_subjects.append(subject_id)
+                        else:
+                            if (database_name == "SIMBAD"):
+                                if(verbose):
+                                    print(f"Subject {subject_id} is in SIMBAD.")
+                            elif (database_name == "Gaia"):
+                                if(verbose):
+                                    print(f"Subject {subject_id} is in Gaia.")
+                pbar.update(1)
 
         not_in_simbad_subject_dataframes = self.getSubjectDataframe(not_in_simbad_subjects)
         not_in_gaia_subject_dataframes = self.getSubjectDataframe(not_in_gaia_subjects)
@@ -1272,7 +1288,7 @@ class Analyzer:
         generated_files = ["not_in_simbad_subjects.csv", "not_in_gaia_subjects.csv", "not_in_either_subjects.csv"]
         return generated_files
 
-    # Principle method for getting acceptable candidates and sorting them by database
+    # Primary method for getting acceptable candidates and sorting them by database
     def performCandidatesSort(self, acceptance_ratio=0.5, acceptance_threshold=0, weighted=False, acceptable_candidates_csv=None):
         acceptable_candidates = []
         if (acceptable_candidates_csv is not None and os.path.exists(acceptable_candidates_csv)):
@@ -1671,7 +1687,6 @@ class Classifier:
     @plotting
     def plotTopUsersPerformances(self, classification_threshold=None, percentile=None, default_insufficient_classifications=True, **kwargs):
         top_usernames = self.analyzer.getTopUsernames(classification_threshold=classification_threshold, percentile=percentile)
-        print(f"Plotting performance for {len(top_usernames)} users.")
 
         top_user_accuracies = self.getUserAccuracy(top_usernames, default_insufficient_classifications=default_insufficient_classifications)
 
@@ -1708,6 +1723,8 @@ class Classifier:
             offset = 0.01
             ax.text(bar.get_x() + bar.get_width() / 2, top_user_accuracies[i] + offset, f"{round(100*top_user_accuracies[i], 2)}%", horizontalalignment='center', verticalalignment='bottom', fontsize=10)
 
+        # Include a legend which shows the total number of users
+        plt.legend([f"Total Users: {len(top_user_accuracies)}"], fontsize=14)
     @plotting
     def plotMostAccurateUsers(self, include_logged_out_users=True, default_insufficient_classifications=True, classification_threshold=0, verified_classifications_threshold=0, accuracy_threshold=0.0, **kwargs):
         most_accurate_users = self.getMostAccurateUsernames(include_logged_out_users=include_logged_out_users, default_insufficient_classifications=default_insufficient_classifications, classification_threshold=classification_threshold, verified_classifications_threshold=verified_classifications_threshold, accuracy_threshold=accuracy_threshold)
@@ -1756,7 +1773,6 @@ class Classifier:
         usernames = self.getMostAccurateUsernames(include_logged_out_users=include_logged_out_users, default_insufficient_classifications=default_insufficient_classifications, classification_threshold=classification_threshold, verified_classifications_threshold=verified_classifications_threshold, accuracy_threshold=accuracy_threshold)
         accuracies = self.getUserAccuracy(usernames, default_insufficient_classifications=default_insufficient_classifications)
         classification_totals = self.analyzer.getTotalClassificationsByUser(usernames)
-        print(f"Plotting performance for {len(usernames)} users.")
 
         plt.scatter(classification_totals, accuracies, c=accuracies, cmap='viridis', edgecolor='none', **kwargs)
         plt.colorbar(label="User Accuracy")

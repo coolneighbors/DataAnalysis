@@ -29,21 +29,21 @@ def gettingSubjects():
 
     # Get all subjects in the project.
     project_subjects = Spout.get_subjects_from_project(project_id, only_orphans=False)
-    print(f"Number of subjects in the project: {len(project_subjects)}")
+    print(f"Number of subjects in the project: {len(project_subjects)}\n")
 
     # Get all orphaned subjects in the project.
     orphaned_project_subjects = Spout.get_subjects_from_project(project_id, only_orphans=True)
-    print(f"Number of orphaned subjects in the project: {len(orphaned_project_subjects)}")
+    print(f"Number of orphaned subjects in the project: {len(orphaned_project_subjects)}\n")
 
     # Get all subjects in the subject set.
     subject_set_subjects = Spout.get_subjects_from_project(project_id, subject_set_id, only_orphans=False)
-    print(f"Number of subjects in the subject set: {len(subject_set_subjects)}")
+    print(f"Number of subjects in the subject set: {len(subject_set_subjects)}\n")
 
     # Get a single subject by its ID.
     subject_id = None
     if(subject_id is not None):
         single_subject = Spout.get_subject(subject_id)
-        print(f"Single subject: {single_subject}")
+        print(f"Single subject: {single_subject}\n")
 
     # With the list of subjects, or individual subjects, you can do whatever you want with them. For example, you can find a subset of
     # subjects that meet a certain criteria using the SubjectDiscriminator class (see DataToolkit\Discriminator.py).
