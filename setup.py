@@ -4,14 +4,13 @@ from setuptools import setup
 with open('requirements.txt', encoding="utf-16") as f:
     requirements = f.read().splitlines()
 
-requirements.insert(0, 'pip>=23.2.1')
-
 setup(
     name='DataToolkit',
     url='https://github.com/coolneighbors/DataToolkit.git',
     author='Aaron Meisner',
     author_email='aaron.meisner@noirlab.edu',
     packages=['DataToolkit'],
+    python_requires='>=3.9',
     install_requires=requirements,
     version='1.0',
     license='MIT',
