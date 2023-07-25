@@ -117,8 +117,9 @@ def plotting(func):
             save = kwargs["save"]
             del kwargs["save"]
             if(save):
-                filename = kwargs.pop("filename", func.__qualname__ + ".png")
-                save_kwargs = {"dpi" : 300}
+                filename = kwargs.pop("filename", (func.__qualname__ + ".png").replace("<", "").replace(">", ""))
+                print(f"Saving figure to {filename}")
+                save_kwargs = {"dpi" : 300.0}
                 plotting_kwargs["save"] = create_plotting_dictionary(plt.savefig, filename, save_kwargs)
 
         # Run the plotting function
@@ -159,6 +160,18 @@ def timer(func):
         result = func(*args, **kwargs)
         end_time = datetime.datetime.now()
         time_in_ms = (end_time - start_time).total_seconds() * 1000
-        print(f"Function {func.__name__} took {time_in_ms} ms to run.")
+
+        # If the time in ms is less than 1000, print it in ms. Otherwise, print it in seconds, minutes, or hours.
+        formatted_time = ""
+        if(time_in_ms < 1000):
+            formatted_time = f"{time_in_ms:.2f} ms"
+        elif(time_in_ms < 1000 * 60):
+            formatted_time = f"{time_in_ms / 1000:.2f} seconds"
+        elif(time_in_ms < 1000 * 60 * 60):
+            formatted_time = f"{time_in_ms / (1000 * 60):.2f} minutes"
+        else:
+            formatted_time = f"{time_in_ms / (1000 * 60 * 60):.2f} hours"
+
+        print(f"Function '{func.__name__}' took {formatted_time} to run.")
         return result
     return wrapper

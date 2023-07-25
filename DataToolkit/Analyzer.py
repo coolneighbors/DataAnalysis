@@ -132,8 +132,8 @@ def uses_user_identifiers(func):
     return conversion_wrapper
 
 
-def days_since_launch(launch_day=datetime.date(2023, 6, 27), today=datetime.date.today()):
-    return (today - launch_day).days + 1
+def days_since_launch(launch_day=datetime.date(2023, 6, 27), date=datetime.date.today()):
+    return (date - launch_day).days + 1
 
 class Analyzer:
     def __init__(self, extracted_file: file_typing, reduced_file: file_typing, subjects_file: Optional[file_typing] = None) -> None:
@@ -305,7 +305,7 @@ class Analyzer:
         extracted_file_datetime = datetime.datetime.fromtimestamp(os.path.getmtime(self.extracted_file))
 
         # Set the default title
-        plt.title(f"Classification Distribution: Day {days_since_launch(today=extracted_file_datetime.date())}")
+        plt.title(f"Classification Distribution: Day {days_since_launch(date=extracted_file_datetime.date())}")
 
         # Set the default x and y labels
         plt.xlabel("Number of Classifications")
