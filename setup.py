@@ -1,5 +1,4 @@
 import subprocess
-
 from setuptools import setup
 
 with open('requirements.txt', encoding="utf-16") as f:
@@ -18,3 +17,7 @@ setup(
     description='The Cool Neighbors data analysis GitHub repository.',
     long_description=open('README.md').read(),
 )
+
+subprocess.call(['pip', 'install', 'python-magic'])
+subprocess.call(['pip', 'uninstall', 'python-magic-bin'])
+subprocess.call(['pip', 'install', 'python-magic-bin'])

@@ -56,17 +56,21 @@ def gettingInformation(analyzer):
     # The analyzer object contains a lot of functionality. It is recommended to look at the Analyzer class in DataToolkit\Analyzer.py
     # to see everything it can do. Here are some examples of what you can do with the analyzer:
 
+    # DONE
     # Get the total number of classifications in the aggregated files.
     print(f"Number of classifications: {analyzer.getTotalClassifications()}\n")
 
+    # DONE
     # Get the total number of classifications for a subjects which have at least n classifications.
     n = 5
     print(f"Number of classifications for subjects with at least {n} classifications: {analyzer.getSubsetOfTotalClassifications(minimum_subject_classification_count=5)}\n")
 
+    # DONE
     # Get the valid subject ids from the workflow classifications.
     subject_ids = analyzer.getSubjectIDs()
     print(f"Valid Subjects:", *subject_ids[0:10], "...\n")
 
+    # DONE
     # Plot the classification distribution for all subjects.
     total_subject_count = 27800
     print("Plotting classification distribution for all valid subjects...\n")
@@ -77,10 +81,12 @@ def gettingInformation(analyzer):
     users_average_time, users_std_time, users_median_time = analyzer.computeTimeStatisticsForClassifications()
     print(f"Average time: {round(users_average_time,2)} seconds\nStandard deviation: {round(users_std_time,2)} seconds\nMedian: {round(users_median_time,2)} seconds\n")
 
+    # DONE
     # Get the usernames or user ids of the users who have classified.
     usernames = analyzer.getUniqueUserIdentifiers(user_identifier="username")
     print(f"Usernames:", *usernames[0:10], "...\n")
 
+    # DONE
     # include_logged_out_users must be false since logged-out users do not have user ids.
     user_ids = analyzer.getUniqueUserIdentifiers(include_logged_out_users=False, user_identifier="user id")
     print(f"User ids:", *user_ids[0:10], "...\n")
@@ -89,10 +95,12 @@ def gettingInformation(analyzer):
     user_classifications = analyzer.getClassificationsByUser(usernames[0])
     print(f"Classifications by user {usernames[0]}: \n{user_classifications}\n")
 
+    # DONE
     # Get the total number of classifications done by a specific user.
     user_classification_count = analyzer.getTotalClassificationsByUser(usernames[0])
     print(f"Total classifications by user {usernames[0]}: {user_classification_count}\n")
 
+    # DONE
     # Get the total number of classifications done by the top users (two modes: percentile or classification threshold).
     top_users_classification_count = analyzer.getTotalClassificationsByTopUsers(classification_threshold=None, percentile=98)
     print(f"Total classifications by top users: {top_users_classification_count}\n")
