@@ -5,7 +5,6 @@ import logging
 import math
 import os
 import pickle
-import subprocess
 import time
 import typing
 import warnings
@@ -22,11 +21,6 @@ import matplotlib.pyplot as plt
 import functools
 
 import panoptes_client
-
-# This fixes an import bug with the python-magic and python-magic-bin packages.
-# https://github.com/zooniverse/panoptes-python-client/issues/264
-subprocess.call(['pip', 'uninstall', 'python-magic-bin'])
-subprocess.call(['pip', 'install', 'python-magic-bin'])
 
 from astropy.coordinates import SkyCoord
 from tqdm import tqdm
@@ -779,9 +773,9 @@ class Analyzer:
         else:
             unique_users = list(self.extracted_dataframe[user_dataframe_key].unique())
             if(user_identifier == "username"):
-                logged_in_unique_users = [user for user in unique_users if "not-logged-in" not in user]
+                logged_in_unique_users = [username for username in unique_users if "not-logged-in" not in username]
             else:
-                logged_in_unique_users = unique_users
+                logged_in_unique_users = [user_id for user_id in unique_users if not np.isnan(user_id)]
             return logged_in_unique_users
 
     # Spout-interface method

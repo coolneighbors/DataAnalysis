@@ -311,10 +311,10 @@ def usingClassifier(analyzer):
 if (__name__ == "__main__"):
     runAggregator()
     analyzer = createAnalyzer()
-    #gettingInformation(analyzer)
+    gettingInformation(analyzer)
     #runningQueries(analyzer)
     #findingCandidates(analyzer)
-    usingClassifier(analyzer)
+    #usingClassifier(analyzer)
 
 
 
