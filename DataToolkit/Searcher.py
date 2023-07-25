@@ -14,7 +14,7 @@ from astropy.io import fits
 from astropy.table import Table
 from astropy.time import Time
 from astropy.visualization import astropy_mpl_style
-from astropy.visualization.wcsaxes import SphericalCircle
+from astropy.visualization.wcsaxes import SphericalCircle, Quadrangle, WCSAxes
 from astroquery.gaia import Gaia
 from astroquery.simbad import Simbad
 from matplotlib import pyplot as plt
@@ -277,8 +277,7 @@ class Searcher(ABC):
         return default_wcs
 
     @staticmethod
-    def getFOVBox(center_coordinates: SkyCoord, FOV, wcs: wcs.WCS, **kwargs):
-
+    def getFOVBox(center_coordinates: SkyCoord, FOV, wcs_ax: WCSAxes, **kwargs):
         if(not isinstance(center_coordinates, SkyCoord)):
             raise InputError(f"Center coordinates are not of the type SkyCoord: {type(center_coordinates)}")
 
@@ -286,46 +285,18 @@ class Searcher(ABC):
 
         resolution = kwargs.get("resolution", 300)
         kwargs.pop("resolution", None)
+        world_fov_quadrangle = Quadrangle((center_coordinates.ra - FOV/2, center_coordinates.dec - FOV/2), FOV, FOV, resolution=resolution, transform=wcs_ax.get_transform("icrs"), **kwargs)
 
-        # Get an accurate spherical circle that is inscribed in the FOV of the search
-        inscribed_FOV_circle = SphericalCircle(center_coordinates, FOV / 2, resolution=resolution)
-
-        # Get the vertices of the circle
-        inscribed_FOV_circle_vertices = inscribed_FOV_circle.get_verts()
-
-        # Get the bounding box of the circle using its vertices
-        inscribed_FOV_circle_bbox = Bbox.from_extents(inscribed_FOV_circle_vertices[:, 0].min(),
-                                                      inscribed_FOV_circle_vertices[:, 1].min(),
-                                                      inscribed_FOV_circle_vertices[:, 0].max(),
-                                                      inscribed_FOV_circle_vertices[:, 1].max())
-
-        # Create a rectangle patch from the bounding box
-        # TODO: Implement Quadangle again
-        world_fov_rectangle = Rectangle((inscribed_FOV_circle_bbox.xmin, inscribed_FOV_circle_bbox.ymin),
-                                        inscribed_FOV_circle_bbox.width, inscribed_FOV_circle_bbox.height, **kwargs)
-
-        bottom_left = wcs.world_to_pixel(SkyCoord(inscribed_FOV_circle_bbox.xmin, inscribed_FOV_circle_bbox.ymin, unit="deg"))
-        bottom_right = wcs.world_to_pixel(SkyCoord(inscribed_FOV_circle_bbox.xmax, inscribed_FOV_circle_bbox.ymin, unit="deg"))
-        top_left = wcs.world_to_pixel(SkyCoord(inscribed_FOV_circle_bbox.xmin, inscribed_FOV_circle_bbox.ymax, unit="deg"))
-
-        # Get width and height of the rectangle
-        width = bottom_right[0] - bottom_left[0]
-        height = top_left[1] - bottom_left[1]
-
-        bottom_left = (float(bottom_left[0]), float(bottom_left[1]))
-
-        pixel_fov_rectangle = Rectangle(bottom_left, width, height, **kwargs)
-
-        return pixel_fov_rectangle, world_fov_rectangle
+        return world_fov_quadrangle
 
     @staticmethod
-    def getFOVLimits(center_coordinates: SkyCoord, FOV, wcs: wcs.WCS):
-        # Get the bounding box of the FOV
-        pixel_fov_rectangle, world_fov_rectangle = Searcher.getFOVBox(center_coordinates, FOV, wcs)
-
-        ra_min, dec_min = world_fov_rectangle.get_xy()
-        ra_max = ra_min + world_fov_rectangle.get_width()
-        dec_max = dec_min + world_fov_rectangle.get_height()
+    def getFOVLimits(center_coordinates: SkyCoord, FOV, wcs_ax: WCSAxes):
+        world_fov_quadrangle = Searcher.getFOVBox(center_coordinates, FOV, wcs_ax)
+        vertices = world_fov_quadrangle.get_xy()
+        ra_min = min(vertices[:,0])
+        ra_max = max(vertices[:,0])
+        dec_min = min(vertices[:,1])
+        dec_max = max(vertices[:,1])
 
         return ra_min, ra_max, dec_min, dec_max
 
@@ -419,21 +390,21 @@ class Searcher(ABC):
                 else:
                     sel.annotation.set_visible(False)
 
-            cursor.connect("add", lambda sel: add_source_annotation(sel))
+            cursor.connect("add", lambda sel: ignore_warnings(add_source_annotation)(sel))
 
         handles = []
         labels = []
 
         # Draw the dashed box around the field of view
         if (self.search_type == "Box" or self.search_type == "Box Search"):
-            pixel_fov_rectangle, world_fov_rectangle = self.getFOVBox(self.search_coordinates, self.search_input, default_wcs, edgecolor='blue', facecolor='none', linestyle='dashed')
-            ax.add_patch(pixel_fov_rectangle)
+            world_fov_rectangle = self.getFOVBox(self.search_coordinates, self.search_input, ax, edgecolor='blue', facecolor='none', linestyle='dashed')
+            ax.add_patch(world_fov_rectangle)
 
             # Set the limits of the axes
-            setAxesLimits(*self.getFOVLimits(self.search_coordinates, self.search_input, default_wcs))
+            setAxesLimits(*self.getFOVLimits(self.search_coordinates, self.search_input, ax))
 
             # Add to existing legend
-            handles.append(pixel_fov_rectangle)
+            handles.append(world_fov_rectangle)
             labels.append("Field of View")
 
         # Draw a dashed circle around the field of view
@@ -442,7 +413,7 @@ class Searcher(ABC):
             search_circle = SphericalCircle((search_ra, search_dec) * u.deg, self.search_input, transform=ax.get_transform('world'), edgecolor='blue', facecolor='none', linestyle='dashed')
             ax.add_patch(search_circle)
 
-            setAxesLimits(*self.getFOVLimits(self.search_coordinates, 2 * self.search_input, default_wcs))
+            setAxesLimits(*self.getFOVLimits(self.search_coordinates, 2 * self.search_input, ax))
 
             handles.append(search_circle)
             labels.append("Search Radius")
@@ -804,8 +775,9 @@ class GaiaSearcher(Searcher):
         query_wcs = self.createWCS(self.search_coordinates)
         try:
             if (self.search_type == "Box" or self.search_type == "Box Search"):
-                # Get the ra and dec from the search coordinates
-                ra_min, ra_max, dec_min, dec_max = self.getFOVLimits(self.search_coordinates, self.search_input, query_wcs)
+                ax = plt.subplot(projection=query_wcs)
+                ra_min, ra_max, dec_min, dec_max = self.getFOVLimits(self.search_coordinates, self.search_input, ax)
+                plt.close()
                 width = ra_max - ra_min
                 height = dec_max - dec_min
                 result_table = Gaia.query_object_async(coordinate=self.search_coordinates, width=width * u.deg, height=height * u.deg, columns=list(fields))

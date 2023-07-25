@@ -55,22 +55,18 @@ def gettingInformation(analyzer):
     print("\nUsing Analyzer...\n")
     # The analyzer object contains a lot of functionality. It is recommended to look at the Analyzer class in DataToolkit\Analyzer.py
     # to see everything it can do. Here are some examples of what you can do with the analyzer:
-
-    # DONE
+    
     # Get the total number of classifications in the aggregated files.
     print(f"Number of classifications: {analyzer.getTotalClassifications()}\n")
-
-    # DONE
+    
     # Get the total number of classifications for a subjects which have at least n classifications.
     n = 5
     print(f"Number of classifications for subjects with at least {n} classifications: {analyzer.getSubsetOfTotalClassifications(minimum_subject_classification_count=5)}\n")
-
-    # DONE
+    
     # Get the valid subject ids from the workflow classifications.
     subject_ids = analyzer.getSubjectIDs()
     print(f"Valid Subjects:", *subject_ids[0:10], "...\n")
-
-    # DONE
+    
     # Plot the classification distribution for all subjects.
     total_subject_count = 27800
     print("Plotting classification distribution for all valid subjects...\n")
@@ -80,43 +76,39 @@ def gettingInformation(analyzer):
     print("Computing time statistics for classifications...")
     users_average_time, users_std_time, users_median_time = analyzer.computeTimeStatisticsForClassifications()
     print(f"Average time: {round(users_average_time,2)} seconds\nStandard deviation: {round(users_std_time,2)} seconds\nMedian: {round(users_median_time,2)} seconds\n")
-
-    # DONE
+    
     # Get the usernames or user ids of the users who have classified.
     usernames = analyzer.getUniqueUserIdentifiers(user_identifier="username")
     print(f"Usernames:", *usernames[0:10], "...\n")
-
-    # DONE
+    
     # include_logged_out_users must be false since logged-out users do not have user ids.
     user_ids = analyzer.getUniqueUserIdentifiers(include_logged_out_users=False, user_identifier="user id")
     print(f"User ids:", *user_ids[0:10], "...\n")
-
+    
     # Get classifications done by a specific user.
     user_classifications = analyzer.getClassificationsByUser(usernames[0])
     print(f"Classifications by user {usernames[0]}: \n{user_classifications}\n")
-
-    # DONE
+    
     # Get the total number of classifications done by a specific user.
     user_classification_count = analyzer.getTotalClassificationsByUser(usernames[0])
     print(f"Total classifications by user {usernames[0]}: {user_classification_count}\n")
-
-    # DONE
+    
     # Get the total number of classifications done by the top users (two modes: percentile or classification threshold).
     top_users_classification_count = analyzer.getTotalClassificationsByTopUsers(classification_threshold=None, percentile=98)
     print(f"Total classifications by top users: {top_users_classification_count}\n")
-
+    
     # Plot the classifications done by the top users (two modes: percentile or classification threshold).
     print("Plotting classifications done by top users...\n")
     analyzer.plotTotalClassificationsByTopUsers(classification_threshold=None, percentile=98)
-
+    
     # Get the classifications done for a specific subject.
     subject_classifications = analyzer.getClassificationsForSubject(subject_ids[0])
-    print(f"Classifications for subject {subject_ids[0]}: \n{subject_classifications}\n")
-
+    print(f"Classifications for subject {subject_ids[0]}: {subject_classifications}\n")
+    
     # Plot the classifications done for a specific subject.
     print(f"Plotting classifications for subject {subject_ids[0]}...\n")
     analyzer.plotClassificationsForSubject(subject_ids[0])
-
+    
     # Compute the time statistics for a specific user.
     user_average_time, user_std_time, user_median_time = analyzer.computeTimeStatisticsForUser(usernames[0])
     print(f"Average time for user {usernames[0]}: {round(user_average_time,2)} seconds\nStandard deviation: {round(user_std_time,2)} seconds\nMedian: {round(user_median_time,2)} seconds\n")
@@ -129,7 +121,7 @@ def gettingInformation(analyzer):
     # few consecutive classifications, which brings up a warning, I am ignoring warnings for this function.
     print("Plotting time histogram for all classifications...\n")
     ignore_warnings(analyzer.plotTimeHistogramForAllClassifications)()
-
+    
     # Plot classification timeline
     print("Plotting classification timeline...\n")
     analyzer.plotClassificationTimeline()
@@ -164,35 +156,37 @@ def gettingInformation(analyzer):
     # Get the Pandas dataframe associated with the subject from the subject file,
     # which contains all the data and metadata information about the subject, the extracted file which contains the
     # classification information, and the reduced file which contains the aggregated classification information.
-
+    
     # Get the subject dataframe for a specific subject.
     subject_dataframe_from_subject_file = analyzer.getSubjectDataframe(subject_ids[0], dataframe_type="default")
-    print(f"Subject dataframe for subject {subject_ids[0]}: \n{subject_dataframe_from_subject_file}\n")
-
+    print(f"Default Subject dataframe for subject {subject_ids[0]}: \n{subject_dataframe_from_subject_file}\n")
+    
     # Get the subject dataframe for a specific subject from the extracted file.
     subject_dataframe_from_extracted_file = analyzer.getSubjectDataframe(subject_ids[0], dataframe_type="extracted")
     print(f"Extracted Subject dataframe for subject {subject_ids[0]}: \n{subject_dataframe_from_extracted_file}\n")
-
+    
     # Get the subject dataframe for a specific subject from the reduced file.
     subject_dataframe_from_reduced_file = analyzer.getSubjectDataframe(subject_ids[0], dataframe_type="reduced")
     print(f"Reduced Subject dataframe for subject {subject_ids[0]}: \n{subject_dataframe_from_reduced_file}\n")
-
+    
     # Combine subject dataframes.
     subject_dataframe_0 = analyzer.getSubjectDataframe(subject_ids[0], dataframe_type="default")
     subject_dataframe_1 = analyzer.getSubjectDataframe(subject_ids[1], dataframe_type="default")
     combined_subject_dataframe = analyzer.combineSubjectDataframes([subject_dataframe_0, subject_dataframe_1])
     print(f"Combined subject dataframe: \n{combined_subject_dataframe}\n")
 
-    # Save the subject dataframe to a CSV file.
-    analyzer.saveSubjectDataframeToFile(subject_dataframe_from_subject_file, "subject_dataframe.csv")
+    # Save a subject dataframe to a CSV file.
+    print("Saving subject dataframe to file...")
+    analyzer.saveSubjectDataframeToFile(combined_subject_dataframe, "combined_subject_dataframe.csv")
+    print("Subject dataframe saved. \n")
 
     # Load the subject dataframe from a CSV file.
-    subject_dataframe_from_file = analyzer.loadSubjectDataframeFromFile("subject_dataframe.csv")
-    print(f"Subject dataframe from file: \n{subject_dataframe_from_file}\n")
+    combined_subject_dataframe_from_file = analyzer.loadSubjectDataframeFromFile("combined_subject_dataframe.csv")
+    print(f"Combined subject dataframe from file: \n{combined_subject_dataframe_from_file}\n")
 
-    # Verify that a subject exists.
+    # Verify that a subject exists within the Analyzer.
     subject_exists = analyzer.subjectExists(subject_ids[0])
-    print(f"Subject {subject_ids[0]} exists: {subject_exists}\n")
+    print(f"Subject {subject_ids[0]} exists within the Analyzer: {subject_exists} \n")
 
     # Get the subject metadata for a specific subject.
     subject_metadata = analyzer.getSubjectMetadata(subject_ids[0])
@@ -200,8 +194,8 @@ def gettingInformation(analyzer):
 
     # Get a particular subject metadata field for a specific subject.
     subject_metadata_field = analyzer.getSubjectMetadataField(subject_ids[0], "ID")
-    print(f"Subject metadata field for subject {subject_ids[0]}: \n{subject_metadata_field}\n")
-
+    print(f"Subject metadata field for subject {subject_ids[0]}: {subject_metadata_field}\n")
+    
     # Show the subject in wise-view.
     print(f"Showing subject {subject_ids[0]} in wise-view...\n")
     analyzer.showSubjectInWiseView(subject_ids[0], open_in_browser=True)
@@ -319,8 +313,8 @@ def usingClassifier(analyzer):
 if (__name__ == "__main__"):
     runAggregator()
     analyzer = createAnalyzer()
-    gettingInformation(analyzer)
-    #runningQueries(analyzer)
+    #gettingInformation(analyzer)
+    runningQueries(analyzer)
     #findingCandidates(analyzer)
     #usingClassifier(analyzer)
 

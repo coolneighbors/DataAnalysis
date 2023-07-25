@@ -748,7 +748,7 @@ class Analyzer:
             plt.plot(binned_datetimes.keys(), binned_datetimes.values(), **kwargs)
         plt.title("Classification Timeline")
         plt.xlabel(binning_parameter)
-        plt.ylabel("Count")
+        plt.ylabel("Classifications")
 
     # Methods related to users
     # ------------------------------------------------------------------------------------------------------------------
