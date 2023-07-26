@@ -10,6 +10,20 @@ import pandas as pd
 from matplotlib import pyplot as plt
 
 def ignore_warnings(func):
+    """
+    Decorator to ignore warnings in a function.
+
+    Parameters
+    ----------
+    func : function
+        Function to ignore warnings in.
+
+    Returns
+    -------
+    function
+        Function with warnings ignored.
+    """
+
     def wrapper(*args, **kwargs):
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
@@ -17,6 +31,20 @@ def ignore_warnings(func):
     return wrapper
 
 def multioutput(func):
+    """
+    Decorator to allow a function to give multiple outputs from multiple inputs.
+
+    Parameters
+    ----------
+    func : function
+        Function to allow multiple outputs from.
+
+    Returns
+    -------
+    function
+        Function with multiple outputs.
+    """
+
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         for index, arg in enumerate(args):
@@ -35,6 +63,48 @@ def multioutput(func):
     return wrapper
 
 def plotting(func):
+    """
+    Decorator to allow a function which plots (with matplotlib) to be called with keyword arguments to modify the plot.
+
+    Parameters
+    ----------
+    func : function
+
+    Returns
+    -------
+    function
+
+    Notes
+    -----
+    This decorator is designed to be used with the matplotlib.pyplot module and supports the following keyword arguments:
+    - new_figure: bool
+        Whether to create a new figure before plotting. Default is True.
+    - figsize: list
+        Size of the figure.
+    - title: str
+        Title of the plot
+    - title_fontsize: int
+        Fontsize of the title. Default is 12.
+    - xlabel: str
+        Label of the x-axis.
+    - ylabel: str
+        Label of the y-axis.
+    - xlim: list
+        Limits of the x-axis.
+    - ylim: list
+        Limits of the y-axis.
+    - axis_fontsize: int
+        Fontsize of the axis labels. Default is 10.
+    - show: bool
+        Whether to show the plot. Default is True.
+    - save: str
+        Path to save the plot to. Default is False.
+    - dpi: int
+        Dots per inch of the plot.
+    - filename: str
+        Filename of the plot. Default is function name.
+    """
+
     @functools.wraps(func)
     def keyword_argument_handler(*args, **kwargs):
         # Has the form of (function, argument, keyword_arguments)
@@ -154,6 +224,20 @@ def plotting(func):
     return keyword_argument_handler
 
 def timer(func):
+    """
+    Decorator which prints the time it takes for a function to run.
+
+    Parameters
+    ----------
+    func : function
+        The function to be timed.
+
+    Returns
+    -------
+    function
+        The function which prints the time it takes for the function to run.
+    """
+
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         start_time =  datetime.datetime.now()
