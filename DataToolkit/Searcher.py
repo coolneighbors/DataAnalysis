@@ -3,6 +3,7 @@ import re
 import warnings
 from abc import ABC, abstractmethod
 from copy import copy
+from typing import Tuple
 
 import astropy.coordinates
 import numpy as np
@@ -41,6 +42,42 @@ class QueryError(Exception):
 class Searcher(ABC):
     boolean_operators = ["&", "|"]
     def __init__(self, search_parameters):
+        """
+        Abstract class for searching a database.
+
+        Parameters
+        ----------
+        search_parameters : dict
+            Dictionary of search parameters.
+
+        Attributes
+        ----------
+        database_name : str
+            Name of the database.
+        default_votable_fields : list
+            List of default votable fields.
+        search_coordinates : astropy.coordinates.SkyCoord
+            Coordinates to search around.
+        search_type : str
+            Type of search to perform.
+        search_input : str
+            Input to use for the search.
+        result_table : astropy.table.Table
+            Table of results from the search.
+        result_dataframe : pandas.DataFrame
+            DataFrame of results from the search.
+        decimal_coordinate_keys : dict
+            Dictionary of decimal coordinate keys.
+        source_name_key : dict
+            Dictionary of the key used to identify the source from the database.
+        default_equinox : float
+            Default equinox to use for the search.
+        default_epoch : float
+            Default epoch to use for the search.
+        default_frame : str
+            Default frame to use for the search.
+        """
+
         self.database_name = None
         self.default_votable_fields = []
         self.search_coordinates, self.search_type, self.search_input = self.checkInput(search_parameters=search_parameters)
@@ -54,6 +91,15 @@ class Searcher(ABC):
 
     @abstractmethod
     def getQuery(self, args):
+        """
+        Abstract method to get the query result from the database.
+
+        Parameters
+        ----------
+        args : tuple
+         arguments to pass to the database query.
+        """
+
         # Each child class must implement this method
 
         # Perform some manipulation of the arguments as needed
@@ -66,6 +112,19 @@ class Searcher(ABC):
         pass
 
     def applyQueryCriteria(self, conditions):
+        """
+        Apply conditions to the result table.
+
+        Parameters
+        ----------
+        conditions : str or tuple[str]
+
+        Returns
+        -------
+        astropy.table.Table
+            Table of results from the conditional search.
+        """
+
         if(self.result_table is None or len(self.result_table) == 0):
             return self.result_table
 
@@ -93,6 +152,22 @@ class Searcher(ABC):
 
     @abstractmethod
     def getConditionalQuery(self, conditions=(), args=()):
+        """
+        Abstract method to get the query result from the database.
+
+        Parameters
+        ----------
+        conditions : str or tuple[str]
+            Conditions to apply to the query.
+        args : tuple
+            Arguments to pass to the database query.
+
+        Returns
+        -------
+        astropy.table.Table
+            Table of results from the conditional search.
+        """
+
         # Each child class must implement this method
 
         # Perform some manipulation of the arguments as needed
@@ -106,6 +181,22 @@ class Searcher(ABC):
 
     @staticmethod
     def applyUnit(value, unit):
+        """
+        Apply a unit to a value.
+
+        Parameters
+        ----------
+        value : float or astropy.units.Quantity
+            Value to apply the unit to.
+        unit : astropy.units.Unit
+            Unit to apply to the value.
+
+        Returns
+        -------
+        astropy.units.Quantity
+            Value with the unit applied and converted if necessary.
+        """
+
         try:
             if(value is None):
                 return None
@@ -129,6 +220,20 @@ class Searcher(ABC):
             raise InputError(f"Invalid value provided, \"{value}\" of type: {type(value).__name__}")
 
     def getUnit(self, table_field):
+        """
+        Get the unit of a table field.
+
+        Parameters
+        ----------
+        table_field : str
+            Field of the table to get the unit of.
+
+        Returns
+        -------
+        astropy.units.Unit
+            Unit of the table field.
+        """
+
         if(self.result_table is None):
             result_table = self.getQuery()
         else:
@@ -137,6 +242,26 @@ class Searcher(ABC):
 
     @staticmethod
     def fixTableUnits(table):
+        """
+        Fix the units of a table.
+
+        Parameters
+        ----------
+        table : astropy.table.Table
+            Table to fix the units of.
+
+        Returns
+        -------
+        astropy.table.Table
+            Table with the units fixed.
+
+        Notes
+        -----
+        This method is used to fix the units of a table after it has been
+        retrieved from the database. This is necessary because the units of
+        the table are not correct for some angle units.
+        """
+
         for column in table.columns:
             column_unit = table[column].unit
             if (column_unit is not None):
@@ -154,6 +279,24 @@ class Searcher(ABC):
         return table
 
     def checkInput(self, search_parameters):
+        """
+        Check the input parameters for the search.
+
+        Parameters
+        ----------
+        search_parameters : dict
+            Dictionary of search parameters.
+
+        Returns
+        -------
+        search_coordinates
+            Coordinates of the search.
+        valid_search_type
+            Valid search type.
+        search_input
+            Input for the search.
+        """
+
         # Get the search coordinates
         search_coordinates = search_parameters.get("Coordinates", None)
 
@@ -256,6 +399,20 @@ class Searcher(ABC):
 
     @staticmethod
     def createWCS(coordinates: SkyCoord):
+        """
+        Create a WCS object from a SkyCoord object
+
+        Parameters
+        ----------
+        coordinates : SkyCoord
+            The coordinates to create the WCS object from
+
+        Returns
+        -------
+        WCS
+            The WCS object created from the coordinates
+        """
+
         if(not isinstance(coordinates, SkyCoord)):
             raise InputError(f"Coordinates provided were not of type SkyCoord: {type(coordinates)}")
 
@@ -278,6 +435,26 @@ class Searcher(ABC):
 
     @staticmethod
     def getFOVBox(center_coordinates: SkyCoord, FOV, wcs_ax: WCSAxes, **kwargs):
+        """
+        Get the FOV box for a given center coordinate and FOV
+
+        Parameters
+        ----------
+        center_coordinates : SkyCoord
+            The center coordinates of the FOV
+
+        FOV : float
+            The FOV of the box
+
+        wcs_ax : WCSAxes
+            The WCSAxes object to get the FOV box for
+
+        Returns
+        -------
+        Quadrangle
+            The FOV box on the sky
+        """
+
         if(not isinstance(center_coordinates, SkyCoord)):
             raise InputError(f"Center coordinates are not of the type SkyCoord: {type(center_coordinates)}")
 
@@ -290,7 +467,33 @@ class Searcher(ABC):
         return world_fov_quadrangle
 
     @staticmethod
-    def getFOVLimits(center_coordinates: SkyCoord, FOV, wcs_ax: WCSAxes):
+    def getFOVLimits(center_coordinates: SkyCoord, FOV, wcs_ax: WCSAxes) -> Tuple[float, float, float, float]:
+        """
+        Get the FOV limits for a given center coordinate and FOV
+
+        Parameters
+        ----------
+        center_coordinates : SkyCoord
+            The center coordinates of the FOV
+
+        FOV : float
+            The FOV of the box
+
+        wcs_ax : WCSAxes
+            The WCSAxes object to get the FOV box for
+
+        Returns
+        -------
+        ra_min : float
+            The minimum RA value of the FOV box
+        ra_max : float
+            The maximum RA value of the FOV box
+        dec_min : float
+            The minimum DEC value of the FOV box
+        dec_max : float
+            The maximum DEC value of the FOV box
+        """
+
         world_fov_quadrangle = Searcher.getFOVBox(center_coordinates, FOV, wcs_ax)
         vertices = world_fov_quadrangle.get_xy()
         ra_min = min(vertices[:,0])
@@ -302,6 +505,15 @@ class Searcher(ABC):
 
     @plotting
     def plotEntries(self, **kwargs):
+        """
+        Plot the entries in the result table
+
+        Parameters
+        ----------
+        kwargs : dict
+            Keyword arguments to pass to the plotting function or the plotting decorator.
+        """
+
         if (self.result_table is None):
             print("Cannot plot entries. Result table is None.")
             return None
@@ -440,6 +652,20 @@ class Searcher(ABC):
 
     @classmethod
     def getAllSubConditions(cls, conditional_string):
+        """
+        Returns a list of all the lowest-level sub-conditions in the conditional string
+
+        Parameters
+        ----------
+        conditional_string : str
+            The conditional string to parse
+
+        Returns
+        -------
+        list[str]
+            A list of all the sub-conditions in the conditional string
+        """
+
         conditional_string = copy(conditional_string)
 
         if (conditional_string[0] == "(" and conditional_string[-1] == ")"):
@@ -456,6 +682,19 @@ class Searcher(ABC):
 
     @classmethod
     def getSubConditions(cls, conditional_string):
+        """
+        Returns a list of the first-layer-deep sub-conditions in the conditional string
+
+        Parameters
+        ----------
+        conditional_string : str
+
+        Returns
+        -------
+        list[str]
+            A list of the first-layer-deep sub-conditions in the conditional string
+        """
+
         conditional_string = copy(conditional_string)
 
         if (conditional_string[0] == "(" and conditional_string[-1] == ")"):
@@ -472,6 +711,21 @@ class Searcher(ABC):
 
     @classmethod
     def safelySplitConditionalString(cls, conditional_string):
+        """
+        Safely splits a conditional string into its constituent parts
+
+        Parameters
+        ----------
+        conditional_string : str
+            The conditional string to split
+
+        Returns
+        -------
+        list[str]
+            A list of the constituent parts of the conditional string.
+            The first element is the column name, the second element is the operator, and the third element is the value
+        """
+
         if (any(boolean_operator in conditional_string for boolean_operator in cls.boolean_operators)):
             raise ValueError("Cannot safely split multi-conditional string with a boolean operator in it")
 
@@ -489,6 +743,24 @@ class Searcher(ABC):
 
     @classmethod
     def applyOperator(cls, operator, column_value, value):
+        """
+        Applies the operator to the column value and the value
+
+        Parameters
+        ----------
+        operator : str
+            The operator to apply
+        column_value : float or str or astropy.units.Quantity
+            The value of the column
+        value : float or str or astropy.units.Quantity
+            The value to compare the column value to
+
+        Returns
+        -------
+        bool
+            True if the operator is satisfied, False otherwise
+        """
+
         if (operator == "<"):
             return column_value < value
         elif (operator == ">"):
@@ -541,6 +813,22 @@ class Searcher(ABC):
             raise ValueError("Invalid operator: " + operator)
 
     def checkCondition(self, table, conditional_string):
+        """
+        Checks if the conditional string is satisfied by the table
+
+        Parameters
+        ----------
+        table : astropy.table.Table
+            The table to check the conditional string against
+        conditional_string : str
+            The conditional string to check
+
+        Returns
+        -------
+        bool
+            True if the conditional string is satisfied by the table, False otherwise
+        """
+
         sub_conditions = self.getSubConditions(conditional_string)
         sub_condition_boolean_lists = []
         for sub_condition in sub_conditions:
@@ -622,6 +910,21 @@ class Searcher(ABC):
 
     @classmethod
     def buildConditionalArgument(cls, column_name, operator, values, boolean_operator="|"):
+        """
+        Builds a conditional argument for the query
+
+        Parameters
+        ----------
+        column_name : str
+            The name of the column to build the conditional argument for
+        operator : str
+            The operator to use in the conditional argument
+        values : list
+            The values to use in the conditional argument
+        boolean_operator : str
+            The boolean operator to use to combine the conditional arguments
+        """
+
         value_combine_exception_operators = ["between"]
 
         if (operator in value_combine_exception_operators):
@@ -645,6 +948,22 @@ class Searcher(ABC):
 
     @classmethod
     def combineConditionalArguments(cls, *conditional_args, boolean_operator="|"):
+        """
+        Combines multiple conditional arguments into a single conditional argument
+
+        Parameters
+        ----------
+        conditional_args :
+            The conditional arguments to combine
+        boolean_operator : str
+            The boolean operator to use to combine the conditional arguments
+
+        Returns
+        -------
+        str
+            The combined conditional argument
+        """
+
         if (boolean_operator not in cls.boolean_operators):
             raise ValueError("The boolean operator must be one of: {}".format(cls.boolean_operators))
 
@@ -655,6 +974,15 @@ class Searcher(ABC):
 
 class SimbadSearcher(Searcher):
     def __init__(self, search_parameters):
+        """
+        Simbad Searcher class
+
+        Parameters
+        ----------
+        search_parameters : dict
+            The search parameters to use for the query
+        """
+
         self.default_equinox = 2000.0
         self.default_epoch = 2000.0
         self.default_frame = "icrs"
@@ -664,6 +992,20 @@ class SimbadSearcher(Searcher):
         self.source_name_key = {"Source Name": "MAIN_ID"}
 
     def getQuery(self, votable_fields=()):
+        """
+        Gets the query for the Simbad search
+
+        Parameters
+        ----------
+        votable_fields : tuple[str] or list[str]
+            The VOTable fields to include in the query
+
+        Returns
+        -------
+        astropy.table.Table
+            The table of the query results
+        """
+
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
 
@@ -716,6 +1058,22 @@ class SimbadSearcher(Searcher):
             return copy(self.result_table)
 
     def getConditionalQuery(self, conditions=(), votable_fields=()):
+        """
+        Gets the query for the Simbad search with the given conditions
+
+        Parameters
+        ----------
+        conditions : tuple[str]
+            The conditions to apply to the query
+        votable_fields : tuple[str]
+            The VOTable fields to include in the query
+
+        Returns
+        -------
+        astropy.table.Table
+            The table of the query results with the given conditions
+        """
+
         # Get the query
         votable_fields = list(votable_fields)
         extra_votable_fields = self.getRequiredVotableFields(conditions)
@@ -728,6 +1086,20 @@ class SimbadSearcher(Searcher):
 
     @classmethod
     def getRequiredVotableFields(cls, conditional_strings):
+        """
+        Gets the required VOTable fields for the given conditions
+
+        Parameters
+        ----------
+        conditional_strings : tuple
+            The conditions to apply to the query
+
+        Returns
+        -------
+        list[str]
+            The list of required VOTable fields to include in the query for the given conditions
+        """
+
         column_names = []
         votable_fields = []
         if (isinstance(conditional_strings, str)):
@@ -754,6 +1126,15 @@ class SimbadSearcher(Searcher):
 
 class GaiaSearcher(Searcher):
     def __init__(self, search_parameters):
+        """
+        Initializes the GaiaSearcher class
+
+        Parameters
+        ----------
+        search_parameters : dict
+            The dictionary of search parameters
+        """
+
         self.data_release = search_parameters.get("data_release", "DR3")
         self.data_release_keys = {"DR1": "gaiadr1", "DR2": "gaiadr2", "DR3": "gaiadr3"}
         data_release_epochs_dict = {"DR1": 2015.0, "DR2": 2015.5, "DR3": 2016.0}
@@ -768,6 +1149,19 @@ class GaiaSearcher(Searcher):
         Gaia.ROW_LIMIT = search_parameters.get("row_limit", 100)
 
     def getQuery(self, fields=()):
+        """
+        Gets the query for the Gaia search with the given fields
+
+        Parameters
+        ----------
+        fields : tuple
+            The fields to include in the query
+
+        Returns
+        -------
+        astropy.table.Table
+            The table of the query results
+        """
 
         # Construct the region query and get the result table
         result_table = None
@@ -800,6 +1194,22 @@ class GaiaSearcher(Searcher):
         return self.result_table
 
     def getConditionalQuery(self, conditions=(), args=()):
+        """
+        Gets the query for the Gaia search with the given conditions
+
+        Parameters
+        ----------
+        conditions : tuple
+            The conditions to apply to the query
+        args : tuple
+            The arguments to apply to the query
+
+        Returns
+        -------
+        astropy.table.Table
+            The table of the query results with the given conditions
+        """
+
         # Get the query
         self.getQuery(args)
 
