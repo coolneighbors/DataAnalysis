@@ -1,26 +1,37 @@
 # DataToolkit
 
-DataParser:
+## Description
 
-A simple parsing object which allows users to extract data from zooniverse classifications. Requires a classifications and subject file as exported from zooniverse.
+This is a toolkit for data analysis and visualization of classifications from the Cool Neighbors project. 
+It is based on the packages present in the requirements.txt file.
 
-## Dependencies
-csv, json, and copy libraries (use pip or similar for installation)
+## Installation
 
-## Usages
+To install the package, run the following command in the terminal:
 
-DataParser:
+```bash
+pip install git+https://github.com/coolneighbors/DataToolkit.git
+```
 
-Parser object(subject filename, classification filename0
-Current functionality: 
-* Identifies users who contributed to a particular subjects classification
-* Identifies all unique users who contributed to a project
-* Identifies subjects that were classfied as "yes" more than a threshold number of times
+## Usage
 
-testParser, subclass of Parser
+To use the package, import it in your python script:
 
-Designed to work with 30 subject classification test for the Backyard Worlds: Cool Neighbors development
+```python
+import DataToolkit
+```
 
-Functionality: 
-* printAccuracy -- Compares hidden subject #R/F metadata to user classifications to determine accuracy for each subject. Prints results to console.
+With the package imported, you can use the many different classes and functions available.
+```python
+from DataToolkit import Aggregator
+from DataToolkit import Analyzer
+from DataToolkit import Decorators
+from DataToolkit import Discriminator
+from DataToolkit import Plotter
+from DataToolkit import Searcher
+```
+
+## Authors
+Based on ideas by Noah Schapera, Grady Robbins.
+Written by Austin Humphreys.
 
