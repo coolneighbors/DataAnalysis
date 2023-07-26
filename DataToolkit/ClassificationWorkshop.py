@@ -58,7 +58,7 @@ if (__name__ == "__main__"):
     #plotPerformanceHistogram(classification_threshold=10, default_insufficient_classifications=True)
     #plotMostAccurateUsers(include_logged_out_users=True, default_insufficient_classifications=False, classification_threshold=1000, verified_classifications_threshold=100, accuracy_threshold=0.0)
     #plotAccuracyVsClassificationTotals(include_logged_out_users=True, default_insufficient_classifications=True, log_plot=True, classification_threshold=0, verified_classifications_threshold=0, accuracy_threshold=0.0)
-    analyzer.plotTimeHistogramForAllClassifications(**plotting_kwargs)
+    analyzer.getSimbadQueryForSubject(subject_ids[0])
     pass
 
 

@@ -23,7 +23,9 @@ import functools
 import panoptes_client
 
 from astropy.coordinates import SkyCoord
+from astropy.table import Table
 from tqdm import tqdm
+from panoptes_client import Project, SubjectSet, Subject, User
 from unWISE_verse.Spout import Spout, check_login
 import astropy.units as u
 from astropy.time import Time
@@ -40,12 +42,29 @@ from numpy import ndarray
 file_typing = Union[str, TextIOWrapper, TextIO]
 
 # Input typing for @uses_subject_ids decorator
-subjects_typing = Union[str, int, TextIOWrapper, TextIO, pd.DataFrame, Iterable[Union[str, int]]]
+subject_ids_input_typing = Union[str, int, TextIOWrapper, TextIO, pd.DataFrame, Iterable[Union[str, int]]]
+
+# Input typing for @uses_user_identifiers decorator
+user_identifiers_input_typing = Union[str, int, Iterable[Union[str, int]]]
+
+astropy_quantity_input_typing = Union[int, float, u.Quantity]
 
 # Processes subject_input into a list of integer subject_ids
-# TODO: Investigate if this can be done better (find first arg which is a list?, keyword arg for input?)
-
 def uses_subject_ids(func):
+    """
+    Decorator for Analyzer methods which converts the subject_input argument into an integer or a list of integers.
+
+    Parameters
+    ----------
+    func : Callable
+        The function to be decorated. Should be of the form func(self_or_cls, subject_input, *args, **kwargs) or func(subject_input, *args, **kwargs) .
+
+    Returns
+    -------
+    Callable
+        The decorated function with the subject_input argument converted.
+    """
+
     @functools.wraps(func)
     def conversion_wrapper(*args, **kwargs):
         subject_ids = []
@@ -101,6 +120,20 @@ def uses_subject_ids(func):
     return conversion_wrapper
 
 def uses_user_identifiers(func):
+    """
+    Decorator for Analyzer methods which converts the user_identifier argument into an integer (if possible) or a string or a list of integers or strings.
+
+    Parameters
+    ----------
+    func : Callable
+        The function to be decorated. Should be of the form func(self_or_cls, user_identifier, *args, **kwargs) or func(user_identifier, *args, **kwargs).
+
+    Returns
+    -------
+    Callable
+        The decorated function with the user_identifier argument converted.
+    """
+
     @functools.wraps(func)
     def conversion_wrapper(*args, **kwargs):
         is_static_method = isinstance(func, staticmethod)
@@ -132,7 +165,23 @@ def uses_user_identifiers(func):
     return conversion_wrapper
 
 
-def days_since_launch(launch_day=datetime.date(2023, 6, 27), date=datetime.date.today()):
+def days_since_launch(launch_day: datetime.date =datetime.date(2023, 6, 27), date: datetime.date =datetime.date.today()) -> int:
+    """
+    Returns the number of days since the launch day.
+
+    Parameters
+    ----------
+    launch_day : datetime.date, optional
+        The launch day of the project. Defaults to June 27, 2023.
+    date : datetime.date, optional
+        The date to calculate the number of days since the launch day. Defaults to today's date.
+
+    Returns
+    -------
+    int
+        The number of days since the launch day.
+    """
+
     return (date - launch_day).days + 1
 
 class Analyzer:
@@ -180,7 +229,7 @@ class Analyzer:
     # Helper methods for Analyzer
     # ------------------------------------------------------------------------------------------------------------------
 
-    def save(self, filename='analyzer.pickle'):
+    def save(self, filename: str ='analyzer.pickle') -> None:
         """
         Save the Analyzer object as a pickle file.
 
@@ -200,7 +249,7 @@ class Analyzer:
         print(f"Saved Analyzer object as '{filename}'")
 
     @staticmethod
-    def load(filename='analyzer.pickle'):
+    def load(filename: str ='analyzer.pickle') -> 'Analyzer':
         """
         Load an Analyzer object from a pickle file.
 
@@ -293,7 +342,16 @@ class Analyzer:
     # Methods related to classifications
     # ------------------------------------------------------------------------------------------------------------------
     # All classifications methods
-    def getTotalClassifications(self):
+    def getTotalClassifications(self) -> int:
+        """
+        Returns the total number of classifications of valid subjects in the extracted file.
+
+        Returns
+        -------
+        total_classifications : int
+            The total number of classifications of valid subjects in the extracted file.
+        """
+
         # Return the number of classifications in the extracted file
         subject_ids = self.getSubjectIDs()
         classification_dictionaries = self.getClassificationsForSubject(subject_ids, weighted=False)
@@ -301,7 +359,20 @@ class Analyzer:
         return total_classifications
 
     @plotting
-    def plotClassificationDistribution(self, total_subject_count=None, **kwargs):
+    def plotClassificationDistribution(self, total_subject_count: Optional[int] = None, **kwargs) -> None:
+        """
+        Plots the classification distribution of the extracted file.
+
+        Parameters
+        ----------
+        total_subject_count : int, optional
+            The total number of subjects in the current workflow on Zooniverse.
+            If None, then the total number of subjects is not used to find how many subjects have 0 classifications.
+
+        **kwargs: optional
+            Keyword arguments to pass to the matplotlib.pyplot.bar() function and the plotting decorator.
+        """
+        
         extracted_file_datetime = datetime.datetime.fromtimestamp(os.path.getmtime(self.extracted_file))
 
         # Set the default title
@@ -324,7 +395,19 @@ class Analyzer:
         # Add a legend with the total number of classifications
         plt.legend([f"Total Classifications: {total_classifications}"])
 
-    def computeTimeStatisticsForClassifications(self):
+    def computeTimeStatisticsForClassifications(self) -> Tuple[float, float, float]:
+        """
+        Computes the time statistics of the users' classifications.
+        
+        Returns
+        -------
+        users_average_time : float
+            The average time between classifications for each user.
+        users_std_time : float
+            The standard deviation of the time between classifications for each user.
+        users_median_time : float
+            The median time between classifications for each user.
+        """
 
         # Get the unique usernames
         user_identifiers = self.getUniqueUserIdentifiers(user_identifier="username")
@@ -366,7 +449,23 @@ class Analyzer:
         # Return the average time between classifications for all users
         return users_average_time, users_std_time, users_median_time
 
-    def getCountDictionaryOfClassifications(self, total_subject_count=None):
+    def getCountDictionaryOfClassifications(self, total_subject_count: Optional[int] = None) -> Dict[int, int]:
+        """
+        Returns a dictionary containing how many subjects have a certain number of classifications. The keys are the
+        number of classifications and the values are the number of subjects with that number of classifications.
+        
+        Parameters
+        ----------
+        total_subject_count : int, optional
+            The total number of subjects in the current workflow on Zooniverse.
+            If None, then the total number of subjects is not used to find how many subjects have 0 classifications.
+        
+        Returns
+        -------
+        number_of_classifications_dict : dict
+            A dictionary containing how many subjects have a certain number of classifications.
+        """
+        
         subject_ids = self.getSubjectIDs()
         number_of_classifications_dict = {}
 
@@ -391,13 +490,45 @@ class Analyzer:
         return number_of_classifications_dict
 
     # Subset of classifications method
-    def getSubsetOfTotalClassifications(self, minimum_subject_classification_count=0, total_subject_count=None):
+    def getSubsetOfTotalClassifications(self, minimum_subject_classification_count: int = 0, total_subject_count: Optional[int] = None):
+        """
+        Returns the total number of classifications for subjects with at least the minimum number of classifications.
+        
+        Parameters
+        ----------
+        minimum_subject_classification_count : int, optional
+            The minimum number of classifications a subject must have to be included in the total number of classifications.
+            The default is 0.
+        total_subject_count : int, optional
+            The total number of subjects in the current workflow on Zooniverse.
+            If None, then the total number of subjects is not used to find how many subjects have 0 classifications.
+            
+        Returns
+        -------
+        total_classifications : int
+            The total number of classifications for subjects with at least the minimum number of classifications.
+        """
+        
         classification_count_dict = self.getCountDictionaryOfClassifications(total_subject_count)
         return sum(key*value for key, value in classification_count_dict.items() if key >= minimum_subject_classification_count)
 
     # User classification methods
     @uses_user_identifiers
-    def getClassificationsByUser(self, user_identifier):
+    def getClassificationsByUser(self, user_identifier: user_identifiers_input_typing) -> pd.DataFrame:
+        """
+        Returns a dataframe containing all the classifications made by a user.
+
+        Parameters
+        ----------
+        user_identifier : str, int, Iterable[str | int]
+            The username or Zooniverse ID of the user.
+
+        Returns
+        -------
+        user_classifications : pandas.DataFrame
+            A dataframe containing all the classifications made by a user.
+        """
+
         # Check if the user_id is a string or an integer
         if (isinstance(user_identifier, str)):
             # If it's a string, then it's a username
@@ -410,18 +541,69 @@ class Analyzer:
 
     @multioutput
     @uses_user_identifiers
-    def getTotalClassificationsByUser(self, user_identifier):
+    def getTotalClassificationsByUser(self, user_identifier: user_identifiers_input_typing) -> int:
+        """
+        Returns the number of classifications made by a user.
+
+        Parameters
+        ----------
+        user_identifier : str, int, Iterable[str | int]
+            The username or Zooniverse ID of the user.
+
+        Returns
+        -------
+        user_classification_count : int
+            The number of classifications made by a user.
+        """
+
         # Return the number of classifications made by that user
         return len(self.getClassificationsByUser(user_identifier))
 
     # Top users classification methods
-    def getTotalClassificationsByTopUsers(self, classification_threshold=None, percentile=None):
-        top_users_dict = self.getClassificationDictionaryOfTopUsers(classification_threshold=classification_threshold,
-                                                                    percentile=percentile)
+    def getTotalClassificationsByTopUsers(self, classification_threshold: Optional[int] = None, percentile : Optional[float] = None) -> int:
+        """
+        Returns the total number of classifications made by the top users.
+
+        Parameters
+        ----------
+        classification_threshold : int, optional
+            The minimum number of classifications a user must have to be included in the total number of classifications.
+            The default is None, which means that the top users are not filtered by the number of classifications.
+
+        percentile : float, optional
+            The percentile of users to include in the total number of classifications.
+            Should be a float between 0 and 100.
+            The default is None, which means that the top users are not filtered by percentile.
+
+        Returns
+        -------
+        total_classifications : int
+            The total number of classifications made by the top users.
+        """
+
+        top_users_dict = self.getClassificationDictionaryOfTopUsers(classification_threshold=classification_threshold, percentile=percentile)
         return sum(top_users_dict.values())
 
     @plotting
-    def plotTotalClassificationsByTopUsers(self, classification_threshold=None, percentile=None, **kwargs):
+    def plotTotalClassificationsByTopUsers(self, classification_threshold: Optional[int] = None, percentile: Optional[float] = None, **kwargs) -> None:
+        """
+        Plots the total number of classifications made by the top users.
+
+        Parameters
+        ----------
+        classification_threshold : int, optional
+            The minimum number of classifications a user must have to be included in the total number of classifications.
+            The default is None, which means that the top users are not filtered by the number of classifications.
+
+        percentile : float, optional
+            The percentile of users to include in the total number of classifications.
+            Should be a float between 0 and 100.
+            The default is None, which means that the top users are not filtered by percentile.
+
+        **kwargs : optional
+            Keyword arguments to pass to the matplotlib.pyplot.bar() function and the plotting decorator.
+        """
+
         top_users_dict = self.getClassificationDictionaryOfTopUsers(classification_threshold=classification_threshold, percentile=percentile)
         # Plot the number of classifications made by each user but stop names from overlapping
         usernames = list(top_users_dict.keys())
@@ -466,7 +648,26 @@ class Analyzer:
     # Subject classification methods
     @multioutput
     @uses_subject_ids
-    def getClassificationsForSubject(self, subject_input, weighted=False):
+    def getClassificationsForSubject(self, subject_input: subject_ids_input_typing, weighted: bool = False) -> Dict[str, int]:
+        """
+        Returns the classifications made for a subject as a classification dictionary.
+
+        Parameters
+        ----------
+        subject_input :  str | int | TextIOWrapper | TextIO | DataFrame | Iterable[str | int]
+            The subject ID of the subject.
+
+        weighted : bool, optional
+            Whether to return the weighted classification dictionary or not.
+            Weights are calculated by each user's accuracy.
+            The default is False.
+
+        Returns
+        -------
+        subject_classifications : Dict[str, int]
+            A classification dictionary containing the classifications made for the subject.
+            Consists of the keys "yes", "no", and "total".
+        """
 
         if(not self.subjectExists(subject_input)):
             warnings.warn(f"Subject {subject_input} does not exist, returning None.")
@@ -528,7 +729,18 @@ class Analyzer:
     @multioutput
     @plotting
     @uses_subject_ids
-    def plotClassificationsForSubject(self, subject_input, **kwargs):
+    def plotClassificationsForSubject(self, subject_input: subject_ids_input_typing, **kwargs) -> None:
+        """
+        Plots the classifications made for a subject as a pie chart.
+
+        Parameters
+        ----------
+        subject_input :  str | int | TextIOWrapper | TextIO | DataFrame | Iterable[str | int]
+            The subject ID of the subject.
+
+        **kwargs, optional
+            Additional keyword arguments to pass to the matplotlib.plt.pie() function or the plotting decorator.
+        """
 
         # Get the number of "yes" and "no" classifications for that subject as a dictionary
         classification_dict = self.getClassificationsForSubject(subject_input)
@@ -558,7 +770,22 @@ class Analyzer:
     # Classification time statistics methods
     @multioutput
     @uses_user_identifiers
-    def getClassificationTimesByUser(self, user_identifier):
+    def getClassificationTimesByUser(self, user_identifier: user_identifiers_input_typing) -> List[float]:
+        """
+        Returns the valid time differences between each classification made by a user.
+        There are exceptions for insufficient consecutive classifications and time differences over 5 minutes are excluded.
+
+        Parameters
+        ----------
+        user_identifier : str, int, Iterable[str | int]
+            The user ID of the user.
+
+        Returns
+        -------
+        user_classification_times : List[float]
+            A list of the valid time differences between each classification made by the user.
+        """
+
         # Get the user's classifications
         user_classifications = self.getClassificationsByUser(user_identifier)
         user_classification_times = []
@@ -594,7 +821,25 @@ class Analyzer:
 
     @multioutput
     @uses_user_identifiers
-    def computeTimeStatisticsForUser(self, user_identifier):
+    def computeTimeStatisticsForUser(self, user_identifier: user_identifiers_input_typing) -> Tuple[float, float, float]:
+        """
+        Computes the average, standard deviation, and median of the classification times for a user.
+
+        Parameters
+        ----------
+        user_identifier : str, int, Iterable[str | int]
+            The user ID of the user.
+
+        Returns
+        -------
+        user_average_time : float
+            The average time between classifications for the user.
+        user_std_time : float
+            The standard deviation of the time between classifications for the user.
+        user_median_time : float
+            The median of the time between classifications for the user.
+        """
+
         # Get the user's classification times
         user_classification_times = self.getClassificationTimesByUser(user_identifier)
 
@@ -608,7 +853,24 @@ class Analyzer:
         return user_average_time, user_std_time, user_median_time
 
     @staticmethod
-    def computeTimeStatistics(classification_times):
+    def computeTimeStatistics(classification_times: List[float]) -> Tuple[float, float, float]:
+        """
+        Computes the average, standard deviation, and median of the classification times from a list of classification times.
+
+        Parameters
+        ----------
+        classification_times : List[float]
+            A list of the classification times.
+
+        Returns
+        -------
+        average_time : float
+            The average time between classifications.
+        std_time : float
+            The standard deviation of the time between classifications.
+        median_time : float
+            The median of the time between classifications.
+        """
 
         if(len(classification_times) == 0):
             raise ValueError(f"Classification times list is empty.")
@@ -623,8 +885,17 @@ class Analyzer:
         return average_time, std_time, median_time
 
     @plotting
-    def plotTimeHistogramForAllClassifications(self, **kwargs):
+    def plotTimeHistogramForAllClassifications(self, **kwargs) -> None:
+        """
+        Plots a histogram of the time between classifications for all users.
 
+        Parameters
+        ----------
+        kwargs, optional
+            Additional keyword arguments to pass to the matplotlib.pyplot.hist function and the plotting decorator.
+        """
+
+        # Get the number of bins and range from the kwargs
         bins = kwargs.pop("bins", 100)
         hist_range = kwargs.pop("range", None)
 
@@ -664,7 +935,18 @@ class Analyzer:
     @multioutput
     @plotting
     @uses_user_identifiers
-    def plotTimeHistogramForUserClassifications(self, user_identifier, **kwargs):
+    def plotTimeHistogramForUserClassifications(self, user_identifier: user_identifiers_input_typing, **kwargs) -> None:
+        """
+        Plots a histogram of the time between classifications for a user.
+
+        Parameters
+        ----------
+        user_identifier : str, int, Iterable[str | int]
+            The user ID of the user.
+        kwargs, optional
+            Additional keyword arguments to pass to the matplotlib.pyplot.hist function and the plotting decorator.
+        """
+
         bins = kwargs.pop("bins", 100)
         hist_range = kwargs.pop("range", None)
 
@@ -697,7 +979,19 @@ class Analyzer:
         plt.legend()
 
     @plotting
-    def plotClassificationTimeline(self, bar=True, binning_parameter="Day", label=True, **kwargs):
+    def plotClassificationTimeline(self, bar: bool = True, binning_parameter: str = "Day", label: bool = True, **kwargs) -> None:
+        """
+        Plots a timeline of the classifications.
+
+        Parameters
+        ----------
+        bar : bool, optional
+            Whether to plot the timeline as a bar graph or a line graph.
+        binning_parameter : str, optional
+            The parameter to bin the classifications by. Can be "Day", "Week", "Month", or "Year".
+        label : bool, optional
+            Whether to label the values on the plot.
+        """
 
         # Get the classification datetimes
         classification_datetimes = pd.to_datetime(self.extracted_dataframe["created_at"])
@@ -753,9 +1047,35 @@ class Analyzer:
     # Methods related to users
     # ------------------------------------------------------------------------------------------------------------------
     # Principle method for getting users
-    def getUniqueUserIdentifiers(self, include_logged_out_users=True, user_identifier="username"):
-        # Note: I tried doing a cross-match between ip addresses and users, but there were no logged-out users
-        # which had the same ip address as a logged-in user. So I don't think its worth the effort to implement.
+    def getUniqueUserIdentifiers(self, include_logged_out_users: bool = True, user_identifier: str = "username") -> Union[List[str], List[int]]:
+        """
+        Gets the unique user identifiers for the classifications.
+
+        Parameters
+        ----------
+        include_logged_out_users : bool, optional
+            Whether to include users who were logged out when they made their classification(s).
+        user_identifier : str, optional
+            The identifier to use for the user. Can be "username" or "user id".
+
+        Returns
+        -------
+        List[str | int]
+            The unique user identifiers.
+
+        Raises
+        ------
+        ValueError
+            If user_identifier is not "username" or "user id".
+
+        ValueError
+            If include_logged_out_users is True and user_identifier is "user id".
+
+        Notes
+        -----
+        I tried doing a cross-match between ip addresses and users, but there were no logged-out users
+        which had the same ip address as a logged-in user. So I don't think its worth the effort to implement.
+        """
 
         user_dataframe_key = None
         if(user_identifier == "username"):
@@ -781,11 +1101,40 @@ class Analyzer:
     # Spout-interface method
     @multioutput
     @uses_user_identifiers
-    def getUser(self, user_identifier):
+    def getUser(self, user_identifier: user_identifiers_input_typing) -> Union[User, List[User]]:
+        """
+        Gets the user(s) from the Spout database.
+
+        Parameters
+        ----------
+        user_identifier : str | int | List[str | int]
+            The user identifier(s) to get the user(s) for.
+
+        Returns
+        -------
+        User | List[User]
+            The user(s).
+        """
+
         return Spout.get_user(user_identifier)
 
     # Methods related to top users
-    def getClassificationDictionaryOfTopUsers(self, classification_threshold=None, percentile=None):
+    def getClassificationDictionaryOfTopUsers(self, classification_threshold: int = None, percentile: float = None) -> Dict[str, int]:
+        """
+        Gets a dictionary of the top users and their number of classifications.
+
+        Parameters
+        ----------
+        classification_threshold : int, optional
+            The minimum number of classifications a user must have to be considered a top user.
+        percentile : float, optional
+            The percentile of users to consider as top users.
+
+        Returns
+        -------
+        Dict[str, int]
+            A dictionary of the top users and their number of classifications.
+        """
 
         if (classification_threshold is None and percentile is None):
             raise ValueError("You must provide either a classification_threshold or a percentile.")
@@ -824,31 +1173,101 @@ class Analyzer:
 
         return top_users_dict
 
-    def getTopUsernames(self, classification_threshold=None, percentile=None):
+    def getTopUsernames(self, classification_threshold: int = None, percentile: float = None) -> List[str]:
+        """
+        Gets a list of the top usernames.
+
+        Parameters
+        ----------
+        classification_threshold : int, optional
+            The minimum number of classifications a user must have to be considered a top user.
+        percentile : float, optional
+            The percentile of users to consider as top users.
+
+        Returns
+        -------
+        List[str]
+            A list of the top usernames.
+        """
+
         top_usernames_dict = self.getClassificationDictionaryOfTopUsers(classification_threshold=classification_threshold, percentile=percentile)
         return list(top_usernames_dict.keys())
 
-    def getTopUsernamesCount(self, classification_threshold=None, percentile=None):
+    def getTopUsernamesCount(self, classification_threshold: int = None, percentile: float= None) -> int:
+        """
+        Gets the number of top usernames.
+
+        Parameters
+        ----------
+        classification_threshold : int, optional
+            The minimum number of classifications a user must have to be considered a top user.
+        percentile : float, optional
+            The percentile of users to consider as top users.
+
+        Returns
+        -------
+        int
+            The number of top usernames.
+        """
+
         top_users_dict = self.getClassificationDictionaryOfTopUsers(classification_threshold=classification_threshold,percentile=percentile)
         return len(top_users_dict)
 
-    def getTopUsers(self, classification_threshold=None, percentile=None):
+    def getTopUsers(self, classification_threshold: int = None, percentile: float = None) -> List[User]:
+        """
+        Gets the top users.
+
+        Parameters
+        ----------
+        classification_threshold : int, optional
+            The minimum number of classifications a user must have to be considered a top user.
+        percentile : float, optional
+            The percentile of users to consider as top users.
+
+        Returns
+        -------
+        List[User]
+            The top users.
+        """
+
         top_usernames = self.getTopUsernames(classification_threshold=classification_threshold, percentile=percentile)
         return self.getUser(top_usernames)
 
     # Methods related to subjects and subject metadata
     # ------------------------------------------------------------------------------------------------------------------
     # Principle method for getting subjects
-    def getSubjectIDs(self):
+    def getSubjectIDs(self) -> List[int]:
+        """
+        Gets the valid subject IDs associated with the classifications.
+
+        Returns
+        -------
+        List[int]
+            The valid subject IDs associated with the classifications.
+        """
+
         # Return the list of subject IDs
         return list(self.subject_ids_dictionary.values())
 
     # Spout-interface method
     @multioutput
     @uses_subject_ids
-    def getSubject(self, subject_input) -> Union[panoptes_client.Subject, List[panoptes_client.Subject]]:
-        # Get the subject with the given subject ID in the subject set with the given subject set ID
+    def getSubject(self, subject_input: subject_ids_input_typing) -> Union[Subject, List[Subject]]:
+        """
+        Gets the subject(s) from Zooniverse, using Spout.
 
+        Parameters
+        ----------
+        subject_input :  str | int | TextIOWrapper | TextIO | DataFrame | Iterable[str | int]
+            The subject ID(s) to get the subject(s) for.
+
+        Returns
+        -------
+        Subject | List[Subject]
+            The subject(s).
+        """
+
+        # Get the subject with the given subject ID in the subject set with the given subject set ID
         if(self.subjects_file is not None):
             return Spout.get_subject(subject_input)
 
@@ -859,11 +1278,24 @@ class Analyzer:
     # Subject dataframe methods
     @multioutput
     @uses_subject_ids
-    def getSubjectDataframe(self, subject_input: subjects_typing, dataframe_type: str = "default") -> Union[pd.DataFrame, List[pd.DataFrame]]:
+    def getSubjectDataframe(self, subject_input: subject_ids_input_typing, dataframe_type: str = "default") -> Union[pd.DataFrame, List[pd.DataFrame]]:
+        """
+        Gets the subject(s) as a dataframe(s).
+
+        Parameters
+        ----------
+        subject_input :  str | int | TextIOWrapper | TextIO | DataFrame | Iterable[str | int]
+            The subject ID(s) to get the subject(s) for.
+
+        Returns
+        -------
+        pd.DataFrame | List[pd.DataFrame]
+            The subject(s) as a dataframe(s).
+        """
 
         @multioutput
         @uses_subject_ids
-        def getSubjectDataframeFromID(subject_input, dataframe_type: str = "default") -> pd.DataFrame:
+        def getSubjectDataframeFromID(subject_input: subject_ids_input_typing, dataframe_type: str = "default") -> Union[pd.DataFrame, List[pd.DataFrame]]:
 
             if(not isinstance(subject_input, int)):
                 raise ValueError("The subject_id must be an integer.")
@@ -901,6 +1333,24 @@ class Analyzer:
 
     @staticmethod
     def combineSubjectDataframes(subject_dataframes: Iterable[pd.DataFrame]) -> pd.DataFrame:
+        """
+        Combines a list of subject dataframes into a single dataframe.
+
+        Parameters
+        ----------
+        subject_dataframes : Iterable[pd.DataFrame]
+            The list of subject dataframes to combine.
+
+        Returns
+        -------
+        pd.DataFrame
+            The combined subject dataframe.
+
+        Notes
+        -----
+        Dataframes which have the same subject_id will be combined into a single row to avoid duplication.
+        """
+
         # Combine a list of subject dataframes into a single dataframe
         if(not isinstance(subject_dataframes, Iterable)):
             if(isinstance(subject_dataframes, pd.DataFrame)):
@@ -916,12 +1366,50 @@ class Analyzer:
     # Subject metadata methods
     @multioutput
     @uses_subject_ids
-    def subjectExists(self, subject_input):
+    def subjectExists(self, subject_input: subject_ids_input_typing) -> Union[bool, List[bool]]:
+        """
+        Checks if the subject exists.
+
+        Parameters
+        ----------
+        subject_input :  str | int | TextIOWrapper | TextIO | DataFrame | Iterable[str | int]
+            The subject ID(s) to check.
+
+        Returns
+        -------
+        bool | List[bool]
+            Whether the subject exists.
+
+        Notes
+        -----
+        This method is used to check if a subject exists before doing operations with a subject. Upon initialization of the
+        Analyzer, the subject IDs are checked and if they do not exist, they are not added to the subject IDs dictionary.
+        This is done to ensure that the subject IDs are valid and that the subject exists but in a time-efficient manner.
+        """
+
         return subject_input in self.subject_ids_dictionary
 
     @multioutput
     @uses_subject_ids
-    def getSubjectMetadata(self, subject_input):
+    def getSubjectMetadata(self, subject_input: subject_ids_input_typing) -> Union[dict, List[dict]]:
+        """
+        Gets the subject metadata for the given subject ID.
+
+        Parameters
+        ----------
+        subject_input :  str | int | TextIOWrapper | TextIO | DataFrame | Iterable[str | int]
+            The subject ID(s) to get the subject metadata for.
+
+        Returns
+        -------
+        dict | List[dict]
+            The subject metadata.
+
+        Notes
+        -----
+        This method is used to get the subject metadata for the given subject ID. If the subject ID does not exist, then
+        a warning is raised and None is returned.
+        """
 
         if(not self.subjectExists(subject_input)):
             warnings.warn(f"Subject ID {subject_input} was not found: Returning None")
@@ -946,7 +1434,23 @@ class Analyzer:
 
     @multioutput
     @uses_subject_ids
-    def getSubjectMetadataField(self, subject_input, field_name):
+    def getSubjectMetadataField(self, subject_input: subject_ids_input_typing, field_name: str) -> Union[any, List[any]]:
+        """
+        Gets the subject metadata field for the given subject ID.
+
+        Parameters
+        ----------
+        subject_input :  str | int | TextIOWrapper | TextIO | DataFrame | Iterable[str | int]
+            The subject ID(s) to get the subject metadata field for.
+        field_name : str
+            The name of the field to get the value for.
+
+        Returns
+        -------
+        any | List[any]
+            The subject metadata field value.
+        """
+
         # Get the subject metadata for the subject with the given subject ID
 
         subject_metadata = self.getSubjectMetadata(subject_input)
@@ -967,7 +1471,30 @@ class Analyzer:
     # Subject WiseView image method
     @multioutput
     @uses_subject_ids
-    def showSubjectInWiseView(self, subject_input, open_in_browser=False):
+    def showSubjectInWiseView(self, subject_input: subject_ids_input_typing, open_in_browser: bool = False) -> Union[str, List[str]]:
+        """
+        Shows the subject in WiseView.
+
+        Parameters
+        ----------
+        subject_input :  str | int | TextIOWrapper | TextIO | DataFrame | Iterable[str | int]
+            The subject ID(s) to show in WiseView.
+        open_in_browser : bool, optional
+            Whether to open the subject in the default web browser, by default False
+
+        Returns
+        -------
+        str | List[str]
+            The WiseView link(s) for the subject(s).
+
+        Notes
+        -----
+        This method is used to show the subject in WiseView. If the subject ID does not exist, then a warning is raised
+        and None is returned. If the subject does not have a WiseView link, then a warning is raised and None will be returned.
+
+        If open_in_browser is True, then the subject will be opened in the default web browser. However, to avoid accidentally
+        opening too many subjects at once, there is a delay of 10 seconds between each subject being opened.
+        """
 
         # Get the WiseView link for the subject with the given subject ID
         wise_view_link = self.getSubjectMetadataField(subject_input, "WISEVIEW")
@@ -994,7 +1521,20 @@ class Analyzer:
     # Subject SIMBAD link method
     @multioutput
     @uses_subject_ids
-    def getSimbadLinkForSubject(self, subject_input):
+    def getSimbadLinkForSubject(self, subject_input: subject_ids_input_typing) -> Union[str, List[str]]:
+        """
+        Gets the SIMBAD link for the subject.
+
+        Parameters
+        ----------
+        subject_input :  str | int | TextIOWrapper | TextIO | DataFrame | Iterable[str | int]
+            The subject ID(s) to get the SIMBAD link for.
+
+        Returns
+        -------
+        str | List[str]
+            The SIMBAD link(s) for the subject(s).
+        """
 
         simbad_link = self.getSubjectMetadataField(subject_input, "SIMBAD")
 
@@ -1013,7 +1553,32 @@ class Analyzer:
     # SIMBAD query methods
     @multioutput
     @uses_subject_ids
-    def getSimbadQueryForSubject(self, subject_input, search_type="Box Search", FOV=120*u.arcsec, radius=60*u.arcsec, plot=False, separation=None):
+    def getSimbadQueryForSubject(self, subject_input: subject_ids_input_typing, search_type: str = "Box Search", FOV: astropy_quantity_input_typing = 120*u.arcsec, radius: astropy_quantity_input_typing = 60*u.arcsec, plot: bool = False, separation: astropy_quantity_input_typing = None) -> Union[Table, List[Table]]:
+        """
+        Gets the SIMBAD query for the subject.
+
+        Parameters
+        ----------
+
+        subject_input :  str | int | TextIOWrapper | TextIO | DataFrame | Iterable[str | int]
+            The subject ID(s) to get the SIMBAD query for.
+        search_type : str, optional
+            The type of SIMBAD search to perform, by default "Box Search". The options are "Box Search" and "Cone Search".
+        FOV : int | float | u.Quantity, optional
+            The field of view to search in, by default 120*u.arcsec. If a number is given, then it is assumed to be in arcseconds.
+        radius : int | float | u.Quantity, optional
+            The radius to search in, by default 60*u.arcsec. If a number is given, then it is assumed to be in arcseconds.
+        plot : bool, optional
+            Whether to plot the SIMBAD query results, by default False
+        separation : int | float | u.Quantity, optional
+            The separation to use for the SIMBAD query plot, by default None. If a number is given, then it is assumed to be in arcseconds.
+
+        Returns
+        -------
+        astropy.table.Table | List[astropy.table.Table]
+            The SIMBAD query(ies) table(s) for the subject(s).
+        """
+
         subject_metadata = self.getSubjectMetadata(subject_input)
 
         if(subject_metadata is None):
@@ -1042,7 +1607,38 @@ class Analyzer:
 
     @multioutput
     @uses_subject_ids
-    def getConditionalSimbadQueryForSubject(self, subject_input, search_type="Box Search", FOV=120*u.arcsec, radius=60*u.arcsec, otypes=["BD*", "BD?", "BrownD*", "BrownD?", "BrownD*_Candidate", "PM*"], plot=False, separation=None):
+    def getConditionalSimbadQueryForSubject(self, subject_input: subject_ids_input_typing, search_type: str = "Box Search", FOV: astropy_quantity_input_typing = 120*u.arcsec, radius: astropy_quantity_input_typing = 60*u.arcsec, otypes: Union[str, List[str]] = ["BD*", "BD?", "BrownD*", "BrownD?", "BrownD*_Candidate", "PM*"], plot: bool = False, separation: astropy_quantity_input_typing = None) -> Union[Table, List[Table]]:
+        """
+        Gets the conditional SIMBAD query for the subject.
+        
+        Parameters
+        ----------
+        subject_input :  str | int | TextIOWrapper | TextIO | DataFrame | Iterable[str | int]
+            The subject ID(s) to get the conditional SIMBAD query for.
+        search_type : str, optional
+            The type of SIMBAD search to perform, by default "Box Search". The options are "Box Search" and "Cone Search".
+        FOV : int | float | u.Quantity, optional
+            The field of view to search in, by default 120*u.arcsec. If a number is given, then it is assumed to be in arcseconds.
+        radius : int | float | u.Quantity, optional
+            The radius to search in, by default 60*u.arcsec. If a number is given, then it is assumed to be in arcseconds.
+        otypes : str | List[str], optional
+            The object types to search for, by default ["BD*", "BD?", "BrownD*", "BrownD?", "BrownD*_Candidate", "PM*"]
+        plot : bool, optional
+            Whether to plot the SIMBAD query results, by default False
+        separation : int | float | u.Quantity, optional
+            The separation to use for the SIMBAD query plot, by default None. If a number is given, then it is assumed to be in arcseconds.
+        Returns
+        -------
+        astropy.table.Table | List[astropy.table.Table]
+            The conditional SIMBAD query(ies) table(s) for the subject(s).
+            
+        Notes
+        -----
+        The conditional SIMBAD query is a SIMBAD query that is performed on the subject's coordinates and reduces the query based on the otypes given.
+        Additionally, the conditional SIMBAD query is performed on a larger field of view than the regular SIMBAD query to account for high proper motion objects.
+        """
+        
+        
         subject_metadata = self.getSubjectMetadata(subject_input)
 
         if (subject_metadata is None):
@@ -1081,13 +1677,61 @@ class Analyzer:
 
     @multioutput
     @uses_subject_ids
-    def sourceExistsInSimbadForSubject(self, subject_input, search_type="Box Search", FOV=120*u.arcsec, radius=60*u.arcsec):
+    def sourceExistsInSimbadForSubject(self, subject_input: subject_ids_input_typing, search_type: str = "Box Search", FOV: astropy_quantity_input_typing = 120*u.arcsec, radius: astropy_quantity_input_typing = 60*u.arcsec) -> bool:
+        """
+        Checks if there is any source in SIMBAD for the subject.
+        
+        Parameters
+        ----------
+        subject_input :  str | int | TextIOWrapper | TextIO | DataFrame | Iterable[str | int]
+            The subject ID(s) to check if there is any source in SIMBAD for.
+        search_type : str, optional
+            The type of SIMBAD search to perform, by default "Box Search". The options are "Box Search" and "Cone Search".
+        FOV : int | float | u.Quantity, optional
+            The field of view to search in, by default 120*u.arcsec. If a number is given, then it is assumed to be in arcseconds.
+        radius : int | float | u.Quantity, optional
+            The radius to search in, by default 60*u.arcsec. If a number is given, then it is assumed to be in arcseconds.
+    
+        Returns
+        -------
+        bool
+            Whether there is any source in SIMBAD for the subject.
+        
+        Notes
+        -----
+        This method is a wrapper for the getSimbadQueryForSubject method that checks if there is any source in SIMBAD for the subject.
+        """
+        
         return len(self.getSimbadQueryForSubject(subject_input, search_type=search_type, FOV=FOV, radius=radius)) > 0
 
     # Gaia query methods
     @multioutput
     @uses_subject_ids
-    def getGaiaQueryForSubject(self, subject_input, search_type="Box Search", FOV=120*u.arcsec, radius=60*u.arcsec, plot=False, separation=None):
+    def getGaiaQueryForSubject(self, subject_input: subject_ids_input_typing, search_type: str = "Box Search", FOV: astropy_quantity_input_typing = 120*u.arcsec, radius: astropy_quantity_input_typing = 60*u.arcsec, plot: bool = False, separation: astropy_quantity_input_typing = None) -> Union[Table, List[Table]]:
+        """
+        Gets the Gaia query for the subject.
+        
+        Parameters
+        ----------
+        subject_input :  str | int | TextIOWrapper | TextIO | DataFrame | Iterable[str | int]
+            The subject ID(s) to get the Gaia query for.
+        search_type : str, optional
+            The type of Gaia search to perform, by default "Box Search". The options are "Box Search" and "Cone Search".
+        FOV : int | float | u.Quantity, optional
+            The field of view to search in, by default 120*u.arcsec. If a number is given, then it is assumed to be in arcseconds.
+        radius : int | float | u.Quantity, optional
+            The radius to search in, by default 60*u.arcsec. If a number is given, then it is assumed to be in arcseconds.
+        plot : bool, optional
+            Whether to plot the Gaia query results, by default False
+        separation : int | float | u.Quantity, optional
+            The separation to use for the Gaia query plot, by default None. If a number is given, then it is assumed to be in arcseconds.
+        
+        Returns
+        -------
+        astropy.table.Table | List[astropy.table.Table]
+            The Gaia query(ies) table(s) for the subject(s).
+        """
+        
         # Get the subject's metadata
         subject_metadata = self.getSubjectMetadata(subject_input)
 
@@ -1117,7 +1761,34 @@ class Analyzer:
 
     @multioutput
     @uses_subject_ids
-    def getConditionalGaiaQueryForSubject(self, subject_input, search_type="Box Search", FOV=120*u.arcsec, radius=60*u.arcsec, gaia_pm=100 * u.mas / u.yr, plot=False, separation=None):
+    def getConditionalGaiaQueryForSubject(self, subject_input: subject_ids_input_typing, search_type: str = "Box Search", FOV: astropy_quantity_input_typing = 120*u.arcsec, radius: astropy_quantity_input_typing = 60*u.arcsec, gaia_pm: astropy_quantity_input_typing = 100 * u.mas / u.yr, plot: bool = False, separation: astropy_quantity_input_typing = None) -> Union[Table, List[Table]]:
+        """
+        Gets the conditional Gaia query for the subject.
+
+        Parameters
+        ----------
+        subject_input :  str | int | TextIOWrapper | TextIO | DataFrame | Iterable[str | int]
+            The subject ID(s) to get the conditional Gaia query for.
+        search_type : str, optional
+            The type of Gaia search to perform, by default "Box Search". The options are "Box Search" and "Cone Search".
+        FOV : int | float | u.Quantity, optional
+            The field of view to search in, by default 120*u.arcsec. If a number is given, then it is assumed to be in arcseconds.
+        radius : int | float | u.Quantity, optional
+            The radius to search in, by default 60*u.arcsec. If a number is given, then it is assumed to be in arcseconds.
+        gaia_pm : int | float | u.Quantity, optional
+            The proper motion to use for the conditional Gaia query, by default 100*u.mas/u.yr. If a number is given, then it is assumed to be in milliarcseconds per year.
+
+        Returns
+        -------
+        astropy.table.Table | List[astropy.table.Table]
+            The conditional Gaia query(ies) table(s) for the subject(s).
+
+        Notes
+        -----
+        The conditional Gaia query is a Gaia query that is performed on the subject's coordinates and reduces the query based on the proper motion given.
+        Additionally, the conditional Gaia query is performed on a larger field of view than the regular Gaia query to account for high proper motion objects.
+        """
+
         subject_metadata = self.getSubjectMetadata(subject_input)
 
         if (subject_metadata is None):
@@ -1156,7 +1827,31 @@ class Analyzer:
 
     @multioutput
     @uses_subject_ids
-    def sourceExistsInGaiaForSubject(self, subject_input, search_type="Box Search", FOV=120*u.arcsec, radius=60*u.arcsec):
+    def sourceExistsInGaiaForSubject(self, subject_input: subject_ids_input_typing, search_type: str = "Box Search", FOV: astropy_quantity_input_typing = 120*u.arcsec, radius: astropy_quantity_input_typing = 60*u.arcsec) -> bool:
+        """
+        Checks if the source exists in Gaia for the subject.
+
+        Parameters
+        ----------
+        subject_input :  str | int | TextIOWrapper | TextIO | DataFrame | Iterable[str | int]
+            The subject ID(s) to check if the source exists in Gaia for.
+        search_type : str, optional
+            The type of Gaia search to perform, by default "Box Search". The options are "Box Search" and "Cone Search".
+        FOV : int | float | u.Quantity, optional
+            The field of view to search in, by default 120*u.arcsec. If a number is given, then it is assumed to be in arcseconds.
+        radius : int | float | u.Quantity, optional
+            The radius to search in, by default 60*u.arcsec. If a number is given, then it is assumed to be in arcseconds.
+
+        Returns
+        -------
+        bool
+            Whether or not the source exists in Gaia for the subject.
+
+        Notes
+        -----
+        This method is a wrapper for the getGaiaQueryForSubject method that checks if the Gaia query returns any results.
+        """
+
         return len(self.getGaiaQueryForSubject(subject_input, search_type=search_type, FOV=FOV, radius=radius)) > 0
 
     # Methods related to selecting acceptable subjects as candidates for review
@@ -1164,7 +1859,30 @@ class Analyzer:
     # Subject type methods
     @staticmethod
     @multioutput
-    def bitmaskToSubjectType(bitmask):
+    def bitmaskToSubjectType(bitmask: Union[int, str, List[int], List[str]]) -> Union[str, List[str]]:
+        """
+        Converts a bitmask value to a subject type.
+
+        Parameters
+        ----------
+        bitmask : int | str | List[int] | List[str]
+            The bitmask value(s) to convert to its subject type(s).
+
+        Returns
+        -------
+        str | List[str]
+            The subject type(s) associated with the bitmask value(s).
+
+        Notes
+        -----
+        The bitmask values and their associated subject types are as follows:
+        1: SMDET Candidate
+        2: Blank
+        4: Known Brown Dwarf
+        8: Quasar
+        16: Random Sky Location
+        32: White Dwarf
+        """
 
         # Convert the bitmask to an integer
         try:
@@ -1180,7 +1898,31 @@ class Analyzer:
 
     @multioutput
     @uses_subject_ids
-    def getSubjectType(self, subject_input):
+    def getSubjectType(self, subject_input: subject_ids_input_typing) -> Union[str, List[str]]:
+        """
+        Gets the subject type for the subject.
+
+        Parameters
+        ----------
+        subject_input :  str | int | TextIOWrapper | TextIO | DataFrame | Iterable[str | int]
+            The subject ID(s) to get the subject type for.
+
+        Returns
+        -------
+        str | List[str]
+            The subject type(s) for the subject ID(s).
+
+        Notes
+        -----
+        The bitmask values and their associated subject types are as follows:
+        1: SMDET Candidate
+        2: Blank
+        4: Known Brown Dwarf
+        8: Quasar
+        16: Random Sky Location
+        32: White Dwarf
+        """
+
         # Get the bitmask for the subject
         bitmask = self.getSubjectMetadataField(subject_input, "#BITMASK")
 
@@ -1196,7 +1938,29 @@ class Analyzer:
     # Acceptable candidate methods
     @multioutput
     @uses_subject_ids
-    def checkIfCandidateIsAcceptable(self, subject_input, acceptance_ratio, acceptance_threshold=0, weighted=False):
+    def checkIfCandidateIsAcceptable(self, subject_input: subject_ids_input_typing, acceptance_ratio: float, acceptance_threshold:int = 0, weighted: bool = False) -> Tuple[bool, Dict[str, int]]:
+        """
+        Checks if the subject candidate is acceptable for review.
+
+        Parameters
+        ----------
+        subject_input :  str | int | TextIOWrapper | TextIO | DataFrame | Iterable[str | int]
+            The subject ID(s) to check if the candidate is acceptable for review.
+        acceptance_ratio : float
+            The ratio of "yes" to "total" classifications that must be met for the candidate to be acceptable for review.
+        acceptance_threshold : int, optional
+            The minimum number of "yes" classifications that must be met for the candidate to be acceptable for review, by default 0.
+        weighted : bool, optional
+            Whether to use the weighted classifications, by default False.
+
+        Returns
+        -------
+        bool
+            Whether the candidate is acceptable for review.
+        Dict[str, int]
+            The number of "yes", "no", and "total" classifications for the subject.
+        """
+
         subject_type = self.getSubjectType(subject_input)
         subject_classifications = self.getClassificationsForSubject(subject_input, weighted=weighted)
 
@@ -1214,7 +1978,29 @@ class Analyzer:
         else:
             return False, subject_classifications
 
-    def findAcceptableCandidates(self, acceptance_ratio=None, acceptance_threshold=0, weighted=False, save=True, verbose=False):
+    def findAcceptableCandidates(self, acceptance_ratio: float, acceptance_threshold: int = 0, weighted: bool = False, save: bool = True, verbose: bool = False) -> List[int]:
+        """
+        Finds the acceptable candidates for review.
+
+        Parameters
+        ----------
+        acceptance_ratio : float
+            The ratio of "yes" to "total" classifications that must be met for the candidate to be acceptable for review.
+        acceptance_threshold : int, optional
+            The minimum number of "yes" classifications that must be met for the candidate to be acceptable for review, by default 0.
+        weighted : bool, optional
+            Whether to use the weighted classifications, by default False.
+        save : bool, optional
+            Whether to save the acceptable candidates to a CSV file, by default True.
+        verbose : bool, optional
+            Whether to print the acceptable candidates, by default False.
+
+        Returns
+        -------
+        List[int]
+            The acceptable candidates for review.
+        """
+
         subject_ids = self.getSubjectIDs()
         accepted_subjects = []
 
@@ -1232,12 +2018,35 @@ class Analyzer:
 
         if(save):
             acceptable_candidates_dataframe = self.combineSubjectDataframes(self.getSubjectDataframe(accepted_subjects))
-            Analyzer.saveSubjectDataframeToFile(acceptable_candidates_dataframe,
-                                                f"acceptable_candidates_acceptance_ratio_{acceptance_ratio}_acceptance_threshold_{acceptance_threshold}.csv")
+            Analyzer.saveSubjectDataframeToFile(acceptable_candidates_dataframe, f"acceptable_candidates_acceptance_ratio_{acceptance_ratio}_acceptance_threshold_{acceptance_threshold}.csv")
 
         return accepted_subjects
 
-    def sortAcceptableCandidatesByDatabase(self, accepted_subjects, verbose=False):
+    def sortAcceptableCandidatesByDatabase(self, accepted_subjects: List[int], verbose: bool = False) -> List[str]:
+        """
+        Sorts and rejects the acceptable candidates by database.
+
+        Parameters
+        ----------
+
+        accepted_subjects : List[int]
+            The acceptable candidates for review.
+        verbose : bool, optional
+            Whether to print the acceptable candidates, by default False.
+
+        Returns
+        -------
+        List[str]
+            The csv filenames for the acceptable candidates which were not found in the respective databases.
+
+        Notes
+        -----
+        The csv filenames are as follows:
+        - not_in_simbad_subjects.csv
+        - not_in_gaia_subjects.csv
+        - not_in_either_subjects.csv
+        """
+
         not_in_simbad_subjects = []
         not_in_gaia_subjects = []
         not_in_either_subjects = []
@@ -1290,7 +2099,29 @@ class Analyzer:
         return generated_files
 
     # Primary method for getting acceptable candidates and sorting them by database
-    def performCandidatesSort(self, acceptance_ratio=0.5, acceptance_threshold=0, weighted=False, acceptable_candidates_csv=None):
+    def performCandidatesSort(self, acceptance_ratio: float = 0.5, acceptance_threshold: int = 0, weighted: bool = False, acceptable_candidates_csv: str = None) -> None:
+        """
+        Performs the candidate generation and sorting process.
+
+        Parameters
+        ----------
+        acceptance_ratio : float, optional
+            The ratio of "yes" classifications to "total" classifications required for a subject to be considered an acceptable candidate, by default 0.5
+        acceptance_threshold : int, optional
+            The minimum number of "yes" classifications required for a subject to be considered an acceptable candidate, by default 0
+        weighted : bool, optional
+            Whether to use the weighted classifications, by default False
+        acceptable_candidates_csv : str, optional
+            The path to the acceptable candidates csv file, by default None. If None, a new acceptable candidates csv file will be generated.
+
+        Notes
+        -----
+        The resulting csv filenames are as follows:
+        - not_in_simbad_subjects.csv
+        - not_in_gaia_subjects.csv
+        - not_in_either_subjects.csv
+        """
+
         acceptable_candidates = []
         if (acceptable_candidates_csv is not None and os.path.exists(acceptable_candidates_csv)):
             print("Found acceptable candidates file.")
@@ -1308,7 +2139,20 @@ class Analyzer:
     # FOV search and checking methods
     @multioutput
     @uses_subject_ids
-    def searchSubjectFOV(self, subject_input):
+    def searchSubjectFOV(self, subject_input: subject_ids_input_typing) -> Tuple[bool, Dict[str, bool]]:
+        """
+        Searches the subject's FOV for known objects in SIMBAD and Gaia.
+
+        Parameters
+        ----------
+        subject_input : str | int | TextIOWrapper | TextIO | DataFrame | Iterable[str | int]
+            The subject(s) to search.
+
+        Returns
+        -------
+        Tuple[bool, Dict[str, bool]]
+            A tuple containing a boolean indicating whether the subject's FOV has any known objects in it, and a dictionary containing the results of the search for each database.
+        """
 
         FOV = 120 * u.arcsec
 
@@ -1322,7 +2166,29 @@ class Analyzer:
 
     @multioutput
     @uses_subject_ids
-    def checkSubjectFOV(self, subject_input, otypes=["BD*", "BD?", "BrownD*", "BrownD?", "BrownD*_Candidate", "PM*"], gaia_pm=100 * u.mas / u.yr):
+    def checkSubjectFOV(self, subject_input: subject_ids_input_typing, otypes: List[str] = ["BD*", "BD?", "BrownD*", "BrownD?", "BrownD*_Candidate", "PM*"], gaia_pm: astropy_quantity_input_typing = 100 * u.mas / u.yr) -> Tuple[Dict[str, bool], Dict[str, Table]]:
+        """
+        Checks the subject's FOV for known objects in SIMBAD and Gaia.
+
+        Parameters
+        ----------
+        subject_input : str | int | TextIOWrapper | TextIO | DataFrame | Iterable[str | int]
+            The subject(s) to check.
+        otypes : List[str], optional
+            The SIMBAD object types to check for, by default ["BD*", "BD?", "BrownD*", "BrownD?", "BrownD*_Candidate", "PM*"]
+        gaia_pm : astropy_quantity_input_typing, optional
+            The Gaia proper motion threshold to use, by default 100 * u.mas / u.yr
+
+        Returns
+        -------
+        Tuple[Dict[str, bool], Dict[str, Table]]
+
+        Notes
+        -----
+        The resulting dictionary keys are as follows:
+        - SIMBAD
+        - Gaia
+        """
 
         simbad_query = self.getConditionalSimbadQueryForSubject(subject_input, search_type="Box Search", FOV=120 * u.arcsec, otypes=otypes)
         gaia_query = self.getConditionalGaiaQueryForSubject(subject_input, search_type="Box Search", FOV=120 * u.arcsec, gaia_pm=gaia_pm)
@@ -1339,7 +2205,33 @@ class Analyzer:
         return database_check_dict, database_query_dict
 
     # Acceptance counts method
-    def calculateAcceptanceCountsBySubjectType(self, acceptance_ratio):
+    def calculateAcceptanceCountsBySubjectType(self, acceptance_ratio: float) -> Dict[str, Dict[str, int]]:
+        """
+        Calculates the acceptance counts for each subject type.
+
+        Parameters
+        ----------
+        acceptance_ratio : float
+            The ratio of "yes" classifications to "total" classifications required for a subject to be considered an acceptable candidate.
+
+        Returns
+        -------
+        Dict[str, Dict[str, int]]
+            A dictionary containing the acceptance counts for each subject type.
+
+        Notes
+        -----
+        The resulting dictionary keys are as follows:
+        - Known Brown Dwarf
+        - Quasar
+        - White Dwarf
+        - SMDET Candidate
+        - Random Sky Location
+
+        Then the dictionary values are dictionaries containing the following keys:
+        - success
+        - total
+        """
 
         # Get the subject IDs
         subject_ids = self.getSubjectIDs()
@@ -1390,13 +2282,36 @@ class Analyzer:
 
     # Helper methods for saving and loading subject dataframes as needed
     @staticmethod
-    def saveSubjectDataframeToFile(subject_dataframe, filename):
+    def saveSubjectDataframeToFile(subject_dataframe: pd.DataFrame, filename: str) -> None:
+        """
+        Saves the subject dataframe to a CSV file.
+
+        Parameters
+        ----------
+        subject_dataframe : pd.DataFrame
+            The subject dataframe to save.
+        filename : str
+            The filename to save the subject dataframe to.
+        """
 
         # Save the subject dataframe to a CSV file
         subject_dataframe.to_csv(filename, index=False)
 
     @staticmethod
-    def loadSubjectDataframeFromFile(filename):
+    def loadSubjectDataframeFromFile(filename: str) -> pd.DataFrame:
+        """
+        Loads the subject dataframe from a CSV file.
+
+        Parameters
+        ----------
+        filename : str
+            The filename to load the subject dataframe from.
+
+        Returns
+        -------
+        pd.DataFrame
+            The subject dataframe.
+        """
 
         # Load the subject dataframe from a CSV file
         subject_dataframe = pd.read_csv(filename)
@@ -1407,7 +2322,16 @@ class Analyzer:
     # Methods related to plotting subjects
     # ------------------------------------------------------------------------------------------------------------------
     @uses_subject_ids
-    def plotSkyMapForSubjects(self, subject_input: subjects_typing):
+    def plotSkyMapForSubjects(self, subject_input: subject_ids_input_typing) -> None:
+        """
+        Plots a sky map for the given subjects.
+
+        Parameters
+        ----------
+        subject_input : subject_ids_input_typing
+            The subject IDs to plot the sky map for.
+        """
+
         subject_dataframes = self.getSubjectDataframe(subject_input)
         subject_dataframe = self.combineSubjectDataframes(subject_dataframes)
         subject_dataframe.to_csv("temp.csv", index=False)
@@ -1417,7 +2341,25 @@ class Analyzer:
 
     @multioutput
     @uses_subject_ids
-    def plotQueryForSubject(self, subject_input, database_name, show_in_wiseview=False):
+    def plotQueryForSubject(self, subject_input: subject_ids_input_typing, database_name: str, show_in_wiseview: bool = False) -> None:
+        """
+        Plots the query for the given subjects.
+
+        Parameters
+        ----------
+        subject_input : subject_ids_input_typing
+            The subject IDs to plot the query for.
+        database_name : str
+            The name of the database to query. Must be one of the following: "SIMBAD", "Gaia", "Not in either".
+        show_in_wiseview : bool, optional
+            Whether to show the subject in WiseView.
+        Notes
+        -----
+        The following databases are supported:
+        - SIMBAD
+        - Gaia
+        """
+
         subject_dataframe = self.getSubjectDataframe(subject_input)
 
         for subject_id in subject_dataframe["subject_id"]:
@@ -1439,23 +2381,40 @@ class Analyzer:
 
     @multioutput
     @uses_subject_ids
-    def plotConditionalQueriesForSubject(self, subject_input, database_name):
+    def plotConditionalQueriesForSubject(self, subject_input: subject_ids_input_typing, database_name: str, show_in_wiseview: bool = False) -> None:
+        """
+        Plots the query for the given subjects.
+
+        Parameters
+        ----------
+        subject_input : subject_ids_input_typing
+            The subject IDs to plot the query for.
+        database_name : str
+            The name of the database to query. Must be one of the following: "SIMBAD", "Gaia", "Not in either".
+        show_in_wiseview : bool, optional
+            Whether to show the subject in WiseView.
+        Notes
+        -----
+        The following databases are supported:
+        - SIMBAD
+        - Gaia
+        """
+
         subject_dataframe = self.getSubjectDataframe(subject_input)
 
         for subject_id in subject_dataframe["subject_id"]:
-            self.showSubjectInWiseView(subject_id, True)
+            if(show_in_wiseview):
+                self.showSubjectInWiseView(subject_id, True)
             if (database_name == "Simbad"):
-                query = self.getConditionalSimbadQueryForSubject(subject_id, FOV=120 * u.arcsec, plot=True,
-                                                                 separation=60 * u.arcsec)
-            elif (database_name == "Gaia"):
-                query = self.getConditionalGaiaQueryForSubject(subject_id, FOV=120 * u.arcsec, plot=True,
-                                                               separation=60 * u.arcsec)
-            elif (database_name == "not in either"):
-                query = self.getConditionalSimbadQueryForSubject(subject_id, FOV=120 * u.arcsec, plot=True,
-                                                                 separation=60 * u.arcsec)
+                query = self.getConditionalSimbadQueryForSubject(subject_id, FOV=120 * u.arcsec, plot=True, separation=60 * u.arcsec)
                 print("Simbad: ", query)
-                query = self.getConditionalGaiaQueryForSubject(subject_id, FOV=120 * u.arcsec, plot=True,
-                                                               separation=60 * u.arcsec)
+            elif (database_name == "Gaia"):
+                query = self.getConditionalGaiaQueryForSubject(subject_id, FOV=120 * u.arcsec, plot=True, separation=60 * u.arcsec)
+                print("Gaia: ", query)
+            elif (database_name == "not in either"):
+                query = self.getConditionalSimbadQueryForSubject(subject_id, FOV=120 * u.arcsec, plot=True, separation=60 * u.arcsec)
+                print("Simbad: ", query)
+                query = self.getConditionalGaiaQueryForSubject(subject_id, FOV=120 * u.arcsec, plot=True, separation=60 * u.arcsec)
                 print("Gaia: ", query)
             else:
                 raise ValueError("Invalid database name.")
@@ -1466,6 +2425,15 @@ class Classifier:
     insufficient_classifications_default_accuracy = 0.5
 
     def __init__(self, analyzer: Analyzer):
+        """
+        Initializes a new instance of the Classifier class.
+
+        Parameters
+        ----------
+        analyzer : Analyzer
+            The analyzer to use with the classification information.
+        """
+
         self.user_information = {}
         self.analyzer = analyzer
         print("Calculating user performances...")
@@ -1480,7 +2448,23 @@ class Classifier:
 
     @multioutput
     @uses_user_identifiers
-    def getUserAccuracy(self, user_identifier, default_insufficient_classifications=True):
+    def getUserAccuracy(self, user_identifier: user_identifiers_input_typing, default_insufficient_classifications: bool = True) -> Union[float, List[float]]:
+        """
+        Gets the accuracy of the given user.
+
+        Parameters
+        ----------
+        user_identifier : user_identifiers_input_typing
+            The user identifier to get the accuracy for.
+        default_insufficient_classifications : bool, optional
+            Whether to return the default accuracy to 0.5, if the user has insufficient classifications.
+
+        Returns
+        -------
+        float | List[float]
+            The accuracy or accuracies of the user or users.
+        """
+
         if (user_identifier not in self.user_information):
             self.calculateUserPerformance(user_identifier)
 
@@ -1493,14 +2477,76 @@ class Classifier:
 
     @multioutput
     @uses_user_identifiers
-    def getUserVerifiedClassifications(self, user_identifier):
+    def getUserVerifiedClassifications(self, user_identifier: user_identifiers_input_typing) -> Dict[str, Dict[str, int]]:
+        """
+        Gets the verified classifications of the given user(s).
+
+        Parameters
+        ----------
+        user_identifier : user_identifiers_input_typing
+            The user identifier(s) to get the verified classifications for.
+
+        Returns
+        -------
+        Dict[str, Dict[str, int]]
+            The verified classifications of the user(s).
+
+        Notes
+        -----
+        The verified classifications are returned in the following format:
+        {
+            "Classifications": {
+                "Known Brown Dwarf": {
+                "success": x1,
+                "failure": y1,
+                "total": x1+y1
+                },
+                "Quasar": {
+                "success": x2,
+                "failure": y2,
+                "total": x2+y2
+                },
+                "Random Sky Location": {
+                "success": x3,
+                "failure": y3,
+                "total": x3+y3
+                }
+            }
+        }
+        """
+
         if (user_identifier not in self.user_information):
             self.calculateUserPerformance(user_identifier)
         return self.user_information[user_identifier]["Classifications"]
 
     @multioutput
     @uses_user_identifiers
-    def getUserInformation(self, user_identifier, default_insufficient_classifications=True):
+    def getUserInformation(self, user_identifier: user_identifiers_input_typing, default_insufficient_classifications: bool = True) -> List[Dict[str, Any]]:
+        """
+        Gets the information of the given user(s).
+
+        Parameters
+        ----------
+
+        user_identifier : user_identifiers_input_typing
+            The user identifier(s) to get the information for.
+        default_insufficient_classifications : bool, optional
+            Whether to return the default accuracy as 0.5, if the user has insufficient classifications.
+
+        Returns
+        -------
+        List[Dict[str, Any]]
+            The information of the user(s).
+
+        Notes
+        -----
+        Contains the following information in the dictionary or dictionaries:
+        Classifications: Dict[str, Dict[str, int]]
+            The verified classifications of the user(s).
+        Performance: Dict[str, Dict[str, float]]
+            The performance of the user(s).
+        """
+
         if (user_identifier not in self.user_information):
             self.calculateUserPerformance(user_identifier)
 
@@ -1514,7 +2560,57 @@ class Classifier:
 
     @multioutput
     @uses_user_identifiers
-    def calculateUserPerformance(self, user_identifier):
+    def calculateUserPerformance(self, user_identifier: user_identifiers_input_typing) -> None:
+        """
+        Calculates the performance of the given user(s).
+
+        Parameters
+        ----------
+        user_identifier : user_identifiers_input_typing
+            The user identifier(s) to calculate the performance for.
+
+        Notes
+        -----
+        The performance is calculated as follows:
+        Accuracy = (x1 + x2 + x3) / (x1 + x2 + x3 + y1 + y2 + y3)
+        Where:
+        x1 = Number of (scaled) successful classifications of known brown dwarfs
+        x2 = Number of (scaled) successful classifications of quasars
+        x3 = Number of (scaled) successful classifications of random sky locations
+        y1 = Number of (scaled) failed classifications of known brown dwarfs
+        y2 = Number of (scaled) failed classifications of quasars
+        y3 = Number of (scaled) failed classifications of random sky locations
+
+        Default scaling for subject types:
+        Known Brown Dwarf: 1
+        Quasar: 1
+        Random Sky Location: 1
+
+        The information is stored in the following format:
+        {
+            "Classifications": {
+                "Known Brown Dwarf": {
+                "success": x1,
+                "failure": y1,
+                "total": x1+y1
+                },
+                "Quasar": {
+                "success": x2,
+                "failure": y2,
+                "total": x2+y2
+                },
+                "Random Sky Location": {
+                "success": x3,
+                "failure": y3,
+                "total": x3+y3
+                }
+            },
+            "Performance": {
+                "Accuracy": (x1 + x2 + x3) / (x1 + x2 + x3 + y1 + y2 + y3)
+            }
+        }
+        """
+
         user_classifications_dataframe = self.analyzer.getClassificationsByUser(user_identifier)
         user_information_dictionary = {"Classifications": {}}
 
@@ -1587,20 +2683,83 @@ class Classifier:
         else:
             raise ValueError(f"User identifier {user_identifier} already exists in user performance dictionary.")
 
-    def calculateAllUserPerformances(self, include_logged_out_users=True):
+    def calculateAllUserPerformances(self, include_logged_out_users: bool = True) -> None:
+        """
+        Calculates the performance of all users in the database.
+
+        Parameters
+        ----------
+        include_logged_out_users : bool, optional
+            Whether to include logged-out users in the calculation. The default is True.
+        """
+
         user_identifiers = self.analyzer.getUniqueUserIdentifiers(user_identifier="username", include_logged_out_users=include_logged_out_users)
         self.calculateUserPerformance(user_identifiers)
 
-    def getAllUserAccuracies(self, include_logged_out_users=True, default_insufficient_classifications=True):
+    def getAllUserAccuracies(self, include_logged_out_users: bool = True, default_insufficient_classifications: bool = True) -> List[float]:
+        """
+        Gets the accuracy of all users in the database.
+
+        Parameters
+        ----------
+        include_logged_out_users : bool, optional
+            Whether to include logged-out users in the calculation. The default is True.
+        default_insufficient_classifications : bool, optional
+            Whether to default to an accuracy of 0.5 if the user has insufficient classifications. The default is True.
+
+        Returns
+        -------
+        List[float]
+            A list of accuracies for each user.
+        """
+
         user_identifiers = self.analyzer.getUniqueUserIdentifiers(user_identifier="username", include_logged_out_users=include_logged_out_users)
         return self.getUserAccuracy(user_identifiers, default_insufficient_classifications=default_insufficient_classifications)
 
-    def getAllUserInformation(self, include_logged_out_users=True, default_insufficient_classifications=True):
+    def getAllUserInformation(self, include_logged_out_users: bool = True, default_insufficient_classifications: bool = True) -> Dict[str, Dict[str, Any]]:
+        """
+        Gets the information of all users in the database in as a dictionary.
+
+        Parameters
+        ----------
+        include_logged_out_users : bool, optional
+            Whether to include logged-out users in the calculation. The default is True.
+        default_insufficient_classifications : bool, optional
+            Whether to default to an accuracy of 0.5 if the user has insufficient classifications. The default is True.
+
+        Returns
+        -------
+        Dict[str, Dict[str, Any]]
+            A dictionary of user information dictionaries, with the username as the key.
+        """
+
         user_identifiers = self.analyzer.getUniqueUserIdentifiers(user_identifier="username", include_logged_out_users=include_logged_out_users)
         user_information_dictionaries = self.getUserInformation(user_identifiers, default_insufficient_classifications=default_insufficient_classifications)
         return {user_identifier: user_information_dictionary for user_identifier, user_information_dictionary  in zip(user_identifiers, user_information_dictionaries)}
 
-    def getMostAccurateUsernames(self, include_logged_out_users=True, default_insufficient_classifications=True, classification_threshold=0, verified_classifications_threshold=0, accuracy_threshold=0.0):
+    def getMostAccurateUsernames(self, include_logged_out_users: bool = True, default_insufficient_classifications: bool = True, classification_threshold: int = 0, verified_classifications_threshold: int = 0, accuracy_threshold:float = 0.0):
+        """
+        Gets the usernames of the most accurate users in the database.
+
+        Parameters
+        ----------
+        include_logged_out_users : bool, optional
+            Whether to include logged-out users in the calculation. The default is True.
+        default_insufficient_classifications : bool, optional
+            Whether to default to an accuracy of 0.5 if the user has insufficient classifications. The default is True.
+        classification_threshold : int, optional
+            The minimum number of classifications a user must have to be considered. The default is 0.
+        verified_classifications_threshold : int, optional
+            The minimum number of verified classifications a user must have to be considered. The default is 0.
+        accuracy_threshold : float, optional
+            The minimum accuracy a user must have to be considered. The default is 0.0.
+
+        Returns
+        -------
+        List[str]
+            A list of usernames of the most accurate users.
+        """
+
         user_information_dictionaries = copy(self.getAllUserInformation(include_logged_out_users=include_logged_out_users, default_insufficient_classifications=default_insufficient_classifications))
         new_user_information_dictionaries = copy(user_information_dictionaries)
         for user_identifier in user_information_dictionaries:
@@ -1625,7 +2784,18 @@ class Classifier:
     @multioutput
     @plotting
     @uses_user_identifiers
-    def plotUserPerformance(self, user_identifier, **kwargs):
+    def plotUserPerformance(self, user_identifier: user_identifiers_input_typing, **kwargs) -> None:
+        """
+        Plots the performance of a user.
+
+        Parameters
+        ----------
+        user_identifier : user_identifiers_input_typing
+            The user to plot the performance of.
+        **kwargs
+            Keyword arguments to pass to the plotting function or to the plotting decorator.
+        """
+
         user_accuracy = self.getUserAccuracy(user_identifier)
 
         if(user_accuracy is None):
@@ -1656,12 +2826,40 @@ class Classifier:
         plt.xlabel("Subject Type")
         plt.ylabel("Number of Classifications")
 
-    def plotAllUsersPerformanceHistogram(self, include_logged_out_users=True, default_insufficient_classifications=True, **kwargs):
+    def plotAllUsersPerformanceHistogram(self, include_logged_out_users: bool = True, default_insufficient_classifications: bool = True, **kwargs) -> None:
+        """
+        Plots a histogram of the performance of all users.
+
+        Parameters
+        ----------
+        include_logged_out_users : bool, optional
+            Whether to include logged-out users in the plot. The default is True.
+        default_insufficient_classifications : bool, optional
+            Whether to default to an accuracy of 0.5 if the user has insufficient classifications. The default is True.
+        **kwargs
+            Keyword arguments to pass to the plotting function or to the plotting decorator.
+        """
+
         user_accuracies = self.getAllUserAccuracies(include_logged_out_users=include_logged_out_users, default_insufficient_classifications=default_insufficient_classifications)
         kwargs["title"] = "User Performance Histogram"
         self.plotPerformanceHistogram(user_accuracies, **kwargs)
 
-    def plotTopUsersPerformanceHistogram(self, classification_threshold=None, percentile=None, default_insufficient_classifications=True, **kwargs):
+    def plotTopUsersPerformanceHistogram(self, classification_threshold: int = None, percentile: float = None, default_insufficient_classifications: bool = True, **kwargs) -> None:
+        """
+        Plots a histogram of the performance of the top users.
+
+        Parameters
+        ----------
+        classification_threshold : int, optional
+            The minimum number of classifications a user must have to be considered. The default is None.
+        percentile : float, optional
+            The percentile of users to consider. The default is None.
+        default_insufficient_classifications : bool, optional
+            Whether to default to an accuracy of 0.5 if the user has insufficient classifications. The default is True.
+        **kwargs
+            Keyword arguments to pass to the plotting function or to the plotting decorator.
+        """
+
         top_usernames = self.analyzer.getTopUsernames(classification_threshold=classification_threshold, percentile=percentile)
         top_user_accuracies = self.getUserAccuracy(top_usernames, default_insufficient_classifications=default_insufficient_classifications)
 
@@ -1674,7 +2872,18 @@ class Classifier:
 
     @staticmethod
     @plotting
-    def plotPerformanceHistogram(accuracies, **kwargs):
+    def plotPerformanceHistogram(accuracies: List[Union[float, None]], **kwargs) -> None:
+        """
+        Plots a histogram of the performance of the users.
+
+        Parameters
+        ----------
+        accuracies : List[float | None]
+
+        **kwargs
+            Keyword arguments to pass to the plotting function or to the plotting decorator.
+        """
+
         # Remove None accuracies
         accuracy_values = [x for x in accuracies if x is not None]
         bins = kwargs.pop("bins", 20)
@@ -1686,7 +2895,22 @@ class Classifier:
         plt.legend([f"Total Users: {len(accuracy_values)}"], fontsize=14)
 
     @plotting
-    def plotTopUsersPerformances(self, classification_threshold=None, percentile=None, default_insufficient_classifications=True, **kwargs):
+    def plotTopUsersPerformances(self, classification_threshold: int = None, percentile: float = None, default_insufficient_classifications:bool = True, **kwargs) -> None:
+        """
+        Plots the performance of the top users.
+
+        Parameters
+        ----------
+        classification_threshold : int, optional
+            The minimum number of classifications a user must have to be considered. The default is None.
+        percentile : float, optional
+            The percentile of users to consider. The default is None.
+        default_insufficient_classifications : bool, optional
+            Whether to default to an accuracy of 0.5 if the user has insufficient classifications. The default is True.
+        **kwargs
+            Keyword arguments to pass to the plotting function or to the plotting decorator.
+        """
+
         top_usernames = self.analyzer.getTopUsernames(classification_threshold=classification_threshold, percentile=percentile)
 
         top_user_accuracies = self.getUserAccuracy(top_usernames, default_insufficient_classifications=default_insufficient_classifications)
@@ -1726,8 +2950,28 @@ class Classifier:
 
         # Include a legend which shows the total number of users
         plt.legend([f"Total Users: {len(top_user_accuracies)}"], fontsize=14)
+
     @plotting
-    def plotMostAccurateUsers(self, include_logged_out_users=True, default_insufficient_classifications=True, classification_threshold=0, verified_classifications_threshold=0, accuracy_threshold=0.0, **kwargs):
+    def plotMostAccurateUsers(self, include_logged_out_users: bool = True, default_insufficient_classifications: bool = True, classification_threshold: int = 0, verified_classifications_threshold: int = 0, accuracy_threshold:float = 0.0, **kwargs) -> None:
+        """
+        Plots the most accurate users.
+
+        Parameters
+        ----------
+        include_logged_out_users : bool, optional
+            Whether to include logged-out users. The default is True.
+        default_insufficient_classifications : bool, optional
+            Whether to default to an accuracy of 0.5 if the user has insufficient classifications. The default is True.
+        classification_threshold : int, optional
+            The minimum number of classifications a user must have to be considered. The default is 0.
+        verified_classifications_threshold : int, optional
+            The minimum number of verified classifications a user must have to be considered. The default is 0.
+        accuracy_threshold : float, optional
+            The minimum accuracy a user must have to be considered. The default is 0.0.
+        **kwargs
+            Keyword arguments to pass to the plotting function or to the plotting decorator.
+        """
+
         most_accurate_users = self.getMostAccurateUsernames(include_logged_out_users=include_logged_out_users, default_insufficient_classifications=default_insufficient_classifications, classification_threshold=classification_threshold, verified_classifications_threshold=verified_classifications_threshold, accuracy_threshold=accuracy_threshold)
 
         most_accurate_users_accuracies = self.getUserAccuracy(most_accurate_users, default_insufficient_classifications=default_insufficient_classifications)
@@ -1770,7 +3014,28 @@ class Classifier:
         plt.legend([f"Total Users: {len(most_accurate_users_accuracies)}"], fontsize=14)
 
     @plotting
-    def plotAccuracyVsClassificationTotals(self, include_logged_out_users=True, default_insufficient_classifications=True, log_plot=True, classification_threshold=0, verified_classifications_threshold=0, accuracy_threshold=0.0, **kwargs):
+    def plotAccuracyVsClassificationTotals(self, include_logged_out_users: bool = True, default_insufficient_classifications:bool = True, log_plot:bool = True, classification_threshold: int = 0, verified_classifications_threshold: int  = 0, accuracy_threshold: float = 0.0, **kwargs) -> None:
+        """
+        Plots the accuracy of users against the number of classifications they have made.
+
+        Parameters
+        ----------
+        include_logged_out_users : bool, optional
+            Whether to include logged-out users. The default is True.
+        default_insufficient_classifications : bool, optional
+            Whether to default to an accuracy of 0.5 if the user has insufficient classifications. The default is True.
+        log_plot : bool, optional
+            Whether to plot the x-axis on a log scale. The default is True.
+        classification_threshold : int, optional
+            The minimum number of classifications a user must have to be considered. The default is 0.
+        verified_classifications_threshold : int, optional
+            The minimum number of verified classifications a user must have to be considered. The default is 0.
+        accuracy_threshold : float, optional
+            The minimum accuracy a user must have to be considered. The default is 0.0.
+        **kwargs
+            Keyword arguments to pass to the plotting function or to the plotting decorator.
+        """
+
         usernames = self.getMostAccurateUsernames(include_logged_out_users=include_logged_out_users, default_insufficient_classifications=default_insufficient_classifications, classification_threshold=classification_threshold, verified_classifications_threshold=verified_classifications_threshold, accuracy_threshold=accuracy_threshold)
         accuracies = self.getUserAccuracy(usernames, default_insufficient_classifications=default_insufficient_classifications)
         classification_totals = self.analyzer.getTotalClassificationsByUser(usernames)
