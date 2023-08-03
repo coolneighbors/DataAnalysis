@@ -206,7 +206,6 @@ class Analyzer:
             # If no subjects_file is provided, then the user must be logged in to access the subjects.
             self.subjects_file = None
             self.subjects_dataframe = None
-            self.subject_set_id = None
             self.login()
             print("You are using the online Analyzer.")
             self.subject_dictionary = {}
@@ -333,11 +332,8 @@ class Analyzer:
         # Get login
         login = Spout.requestLogin(save=save)
 
-        # Get Zooniverse IDs
-        project_id, self.subject_set_id = Spout.requestZooniverseIDs(save=save)
-
-        # Create Spout object to access the Zooniverse project
-        Spout(project_identifier=project_id, login=login, display_printouts=False)
+        # Login to Zooniverse via Spout
+        Spout.loginToZooniverse(login)
 
     # Methods related to classifications
     # ------------------------------------------------------------------------------------------------------------------
