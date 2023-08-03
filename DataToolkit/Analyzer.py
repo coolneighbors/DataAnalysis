@@ -165,7 +165,7 @@ def uses_user_identifiers(func):
     return conversion_wrapper
 
 
-def days_since_launch(launch_day: datetime.date =datetime.date(2023, 6, 27), date: datetime.date =datetime.date.today()) -> int:
+def days_since_launch(launch_day: datetime.date =datetime.date(2023, 6, 27), date: datetime.date = datetime.date.today()) -> int:
     """
     Returns the number of days since the launch day.
 
@@ -372,11 +372,10 @@ class Analyzer:
         **kwargs: optional
             Keyword arguments to pass to the matplotlib.pyplot.bar() function and the plotting decorator.
         """
-        
-        extracted_file_datetime = datetime.datetime.fromtimestamp(os.path.getmtime(self.extracted_file))
 
+        latest_datetime = datetime.datetime.strptime(self.extracted_dataframe["created_at"].max(), '%Y-%m-%d %H:%M:%S  UTC')
         # Set the default title
-        plt.title(f"Classification Distribution: Day {days_since_launch(date=extracted_file_datetime.date())}")
+        plt.title(f"Classification Distribution: Day {days_since_launch(date=latest_datetime.date())}")
 
         # Set the default x and y labels
         plt.xlabel("Number of Classifications")
